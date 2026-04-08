@@ -143,7 +143,7 @@ with tabs[0]:
                     Skriv en målrettet ansøgning til {title} hos {company}.
 
                     VIGTIGT: Start direkte med selve ansøgningsteksten (f.eks. "Kære [Navn]"). 
-                    INKLUDÉR IKKE navn, adresse, tlf eller e-mail øverst, da dette allerede er i min skabelon.
+                    INKLUDÉR IKKE navn, adresse, tlf eller e-mail øverst, da dette allerede er i min skabelon. Inkluder ej heller med venlig hilsen og mit navn, da det også er i min skabelon.
 
                     Tone: {tone_desc}
                     
