@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import io
+import os
 import sqlite3
 import pandas as pd
 from datetime import datetime
