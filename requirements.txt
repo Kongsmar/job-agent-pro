@@ -3,3 +3,4 @@ openai
 pandas
 python-docx
 fpdf
+PyPDF2
