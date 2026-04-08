@@ -4,3 +4,5 @@ pandas
 python-docx
 fpdf
 PyPDF2
+beautifulsoup4
+requests
