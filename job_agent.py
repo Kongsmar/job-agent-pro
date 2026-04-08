@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
-db_path = "job_archive_final.db"
+db_path = "job_archive_v10.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -51,6 +51,7 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=11)
+    # Håndtering af specialtegn
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
@@ -58,38 +59,31 @@ def create_pdf(text):
 def fill_word_template(template_file, content, company_name):
     try:
         doc = Document(template_file)
-        # Sørger for at datoen altid er i dagens format
         today_str = datetime.now().strftime("%d. %B %Y")
-        
         data_map = {
             "{{ANSOGNING}}": content, 
             "{{VIRKSOMHED}}": company_name, 
             "{{DATO}}": today_str
         }
-        
-        # Gennemgå alle afsnit og erstat koder
         for p in doc.paragraphs:
             for key, value in data_map.items():
                 if key in p.text:
                     p.text = p.text.replace(key, value)
-        
         target_stream = io.BytesIO()
         doc.save(target_stream)
         target_stream.seek(0)
         return target_stream
-    except Exception as e:
-        st.error(f"Fejl ved udfyldning af Word: {e}")
-        return None
+    except: return None
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("AI-drevet ansøgningsværktøj | ATS & HR-Robot Optimeret")
+st.caption("AI-drevet | ATS-optimeret | Match-analyse")
 
 tabs = st.tabs(["🚀 Generer Ansøgning", "📁 Arkiv"])
 
 with tabs[0]:
     with st.sidebar:
-        st.header("⚙️ Indstillinger")
+        st.header("⚙️ Konfiguration")
         api_key = st.secrets.get("OPENAI_API_KEY")
         uploaded_cv = st.file_uploader("1. Upload dit CV (PDF)", type="pdf")
         uploaded_template = st.file_uploader("2. Upload Word-skabelon (.docx)", type="docx")
@@ -97,17 +91,13 @@ with tabs[0]:
         st.divider()
         st.subheader("🎭 Toneleje")
         tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
-        selected_tone = st.select_slider(
-            "Vælg stil:", 
-            options=tone_options, 
-            value="Balanceret"
-        )
+        selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balanceret")
         
         tone_prompts = {
             "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog.",
-            "Professionel": "saglig, forretningsorienteret og kompetent. Moderne erhvervssprog.",
+            "Professionel": "saglig, forretningsorienteret og kompetent.",
             "Balanceret": "professionel men imødekommende. God blanding af personlighed og fag.",
-            "Personlig": "varm, autentisk og fortællende. Fokus på værdier og motivation.",
+            "Personlig": "varm, autentisk og fortællende. Fokus på værdier.",
             "Kreativ": "modig, sprudlende og unik. Brug en stærk krog i indledningen."
         }
 
@@ -121,9 +111,9 @@ with tabs[0]:
 
     if st.button("Analysér & Generér Ansøgning ✨"):
         if not api_key:
-            st.error("OpenAI API-nøgle mangler i Streamlit Secrets.")
+            st.error("OpenAI API-nøgle mangler i Secrets.")
         elif not uploaded_cv or not company or (not job_url and not job_desc_manual):
-            st.error("Husk at uploade CV og udfylde jobdetaljer.")
+            st.error("Udfyld venligst alle felter og upload dit CV.")
         else:
             try:
                 client = OpenAI(api_key=api_key)
@@ -131,21 +121,13 @@ with tabs[0]:
                 
                 job_text = job_desc_manual
                 if job_url:
-                    with st.spinner("Henter tekst fra jobopslag..."):
+                    with st.spinner("Henter jobopslag..."):
                         fetched = get_text_from_url(job_url)
                         if len(fetched) > 150: job_text = fetched
 
-                # --- TRIN 1: ATS ANALYSE ---
-                with st.spinner("Kører ATS-scanning og match-analyse..."):
-                    analysis_prompt = f"""
-                    Analysér jobopslaget og CV'et som en HR-robot (ATS):
-                    1. List de 5 vigtigste nøgleord (kompetencer/software/metoder).
-                    2. Identificér mangler (gaps) i CV'et ift. jobbet.
-                    3. Giv en kort vurdering af matchet.
-                    
-                    Job: {job_text[:2500]}
-                    CV: {cv_text[:2500]}
-                    """
+                # --- TRIN 1: ATS & MATCH ANALYSE ---
+                with st.spinner("Kører ATS-scanning..."):
+                    analysis_prompt = f"Analysér jobopslaget og CV'et som en HR-robot (ATS). Find nøgleord og gaps.\nJob: {job_text[:2000]}\nCV: {cv_text[:2000]}"
                     analysis_res = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[{"role": "system", "content": "Du er en ATS-ekspert."},
@@ -155,18 +137,15 @@ with tabs[0]:
                     st.info("📊 **ATS Match Analyse:**\n\n" + analysis_content)
 
                 # --- TRIN 2: GENERERING ---
-                with st.spinner("Skriver din optimerede ansøgning..."):
+                with st.spinner(f"Skriver en {selected_tone.lower()} ansøgning..."):
                     tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
+                    Tone: {tone_desc}
                     
-                    TONE: {tone_desc}
+                    Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
+                    {analysis_content}
                     
-                    ATS-STRATEGI:
-                    - Inkorporér nøgleord naturligt fra analysen.
-                    - Adressér proaktivt eventuelle mangler i CV'et ved at fokusere på motivation eller lignende kompetencer.
-                    
-                    Analyse: {analysis_content}
                     CV: {cv_text}
                     Jobopslag: {job_text}
                     """
@@ -187,17 +166,44 @@ with tabs[0]:
                     conn.close()
                     
                     st.divider()
-                    st.subheader("📝 Resultat")
+                    st.subheader("📝 Din Ansøgning")
                     st.write(ans_text)
                     
-                    # DOWNLOAD SEKTION
-                    st.divider()
+                    # DOWNLOADS
                     d1, d2, d3 = st.columns(3)
                     with d1:
                         if uploaded_template:
                             w_file = fill_word_template(uploaded_template, ans_text, company)
                             if w_file:
-                                st.download_button("Hent Word-fil 📄", w_file, f"Ansogning_{company}.docx")
+                                st.download_button("Hent Word-fil 📄", w_file, f"Ansøgning_{company}.docx")
                         else:
-                            st.warning("Upload skabelon for Word-fil")
+                            st.warning("Upload skabelon for Word")
                     with d2:
+                        st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansøgning_{company}.pdf")
+                    with d3:
+                        st.download_button("Hent Opslag (PDF)", create_pdf(job_text), f"Opslag_{company}.pdf")
+            
+            except Exception as e:
+                st.error(f"Fejl: {e}")
+
+with tabs[1]:
+    st.header("📁 Arkiv")
+    if os.path.exists(db_path):
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
+        conn.close()
+        
+        if df.empty:
+            st.info("Arkivet er tomt.")
+        else:
+            for i, row in df.iterrows():
+                with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.write("**Ansøgning:**")
+                        st.write(row['ansogning'])
+                        st.download_button("Hent Tekst", row['ansogning'], f"Arkiv_{row['id']}.txt", key=f"ans_{row['id']}")
+                    with col_b:
+                        st.write("**Originalt Opslag:**")
+                        st.write(row['opslag'][:500] + "...")
+                        st.download_button("Hent Opslag (PDF)", create_pdf(row['opslag']), f"Opslag_{row['id']}.pdf", key=f"ops_{row['id']}")
