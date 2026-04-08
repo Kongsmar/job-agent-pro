@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro", page_icon="💼", layout="wide")
-db_path = "job_archive_v7.db"
+db_path = "job_archive_v8.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -21,7 +21,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS archive
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   date TEXT, company TEXT, title TEXT, 
-                  ansogning TEXT, opslag TEXT, tone_level INTEGER)''')
+                  ansogning TEXT, opslag TEXT, tone TEXT)''')
     conn.commit()
     conn.close()
 
@@ -36,7 +36,7 @@ def get_text_from_url(url):
         for script in soup(["script", "style"]):
             script.extract()
         return soup.get_text(separator=' ', strip=True)
-    except Exception as e:
+    except:
         return ""
 
 def extract_text_from_pdf(pdf_file):
@@ -58,9 +58,9 @@ def create_pdf(text):
     return pdf.output(dest='S').encode('latin-1')
 
 # --- APP LAYOUT ---
-st.title("💼 Job Agent Pro: Analyse & Ansøgning")
+st.title("💼 Job Agent Pro")
 
-tabs = st.tabs(["🚀 Ny Analyse & Ansøgning", "📁 Arkiv"])
+tabs = st.tabs(["🚀 Analyse & Ansøgning", "📁 Arkiv"])
 
 with tabs[0]:
     with st.sidebar:
@@ -71,15 +71,22 @@ with tabs[0]:
         
         st.divider()
         st.subheader("🎭 Personligheds-filter")
-        # Slider fra 1 (Formel) til 5 (Personlig/Kreativ)
-        tone_val = st.sidebar.slider("Toneleje", 1, 5, 3, help="1: Meget Formel/Konservativ | 3: Professionel | 5: Meget Personlig/Kreativ")
         
-        tone_map = {
-            1: "meget formel, korrekt og konservativ. Brug 'De/Dem' hvis passende og et højtideligt sprog.",
-            2: "professionel, saglig og forretningsorienteret.",
-            3: "moderne, balanceret og engageret professionel.",
-            4: "personlig, varm og fortællende med fokus på værdier.",
-            5: "meget personlig, kreativ og modig. Skil dig ud med en unik stemme."
+        # HER ER DIN NYE SLIDER MED TEKST
+        tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
+        selected_tone = st.select_slider(
+            "Vælg toneleje:",
+            options=tone_options,
+            value="Balanceret"
+        )
+        
+        # Forklaring til AI'en baseret på valget
+        tone_prompts = {
+            "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog og vær meget respektfuld.",
+            "Professionel": "saglig, forretningsorienteret og kompetent. Brug et moderne erhvervssprog.",
+            "Balanceret": "professionel men imødekommende. En god blanding af personlighed og faglighed.",
+            "Personlig": "varm, autentisk og fortællende. Fokusér på dine værdier og din menneskelige motivation.",
+            "Kreativ": "modig, sprudlende og anderledes. Brug en fængende indledning og et legende sprog."
         }
 
     st.subheader("Job Detaljer")
@@ -87,12 +94,12 @@ with tabs[0]:
     with c1: company = st.text_input("Virksomhed:")
     with c2: title = st.text_input("Jobtitel:")
     
-    job_url = st.text_input("Link til jobopslag:")
+    job_url = st.text_input("Link til jobopslag (URL):")
     job_desc_manual = st.text_area("Eller indsæt jobtekst her:", height=150)
 
     if st.button("Start Match-Analyse & Generering ✨"):
         if not api_key or not uploaded_cv or (not job_url and not job_desc_manual):
-            st.error("Mangler API-nøgle, CV eller Jobbeskrivelse.")
+            st.error("Hov! Husk at uploade CV og indsætte jobopslag.")
         else:
             try:
                 client = OpenAI(api_key=api_key)
@@ -101,46 +108,47 @@ with tabs[0]:
                 # Hent jobtekst
                 job_text = job_desc_manual
                 if job_url:
-                    with st.spinner("Henter jobopslag..."):
+                    with st.spinner("Henter jobopslag fra nettet..."):
                         url_text = get_text_from_url(job_url)
-                        if len(url_text) > 200: job_text = url_text
+                        if len(url_text) > 100: job_text = url_text
 
-                # --- TRIN 1: ANALYSE ---
+                # --- TRIN 1: MATCH ANALYSE ---
                 st.divider()
-                with st.spinner("Analyserer match mellem CV og Job..."):
+                with st.spinner("Analyserer match..."):
                     analysis_prompt = f"""
-                    Du er en rekrutteringsekspert. Lav en kort og præcis analyse af følgende:
+                    Du er rekrutteringsekspert. Lav en ultra-skarp analyse:
                     1. Hvad er de 3 vigtigste krav i jobopslaget?
-                    2. Hvordan matcher kandidatens CV disse krav?
-                    3. Er der nogle 'gaps' (mangler), som ansøgningen skal adressere?
+                    2. Hvordan matcher dette CV kravene? (Vær ærlig)
+                    3. Hvilke mangler skal vi 'skrive udenom' eller forklare i ansøgningen?
                     
-                    Jobopslag: {job_text[:2000]}
-                    CV: {cv_text[:2000]}
+                    Job: {job_text[:2500]}
+                    CV: {cv_text[:2500]}
                     """
                     
                     analysis_res = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ærlig rekrutteringskonsulent."},
+                        messages=[{"role": "system", "content": "Du er en professionel rekrutteringskonsulent."},
                                   {"role": "user", "content": analysis_prompt}]
                     )
                     st.subheader("📊 Match Analyse")
                     st.info(analysis_res.choices[0].message.content)
 
                 # --- TRIN 2: ANSØGNING ---
-                with st.spinner("Skriver ansøgning baseret på analyse og valgt tone..."):
-                    tone_desc = tone_map[tone_val]
+                with st.spinner(f"Skriver en {selected_tone.lower()} ansøgning..."):
+                    tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
-                    Skriv en målrettet ansøgning til stillingen som {title} hos {company}.
+                    Skriv en målrettet jobansøgning til {title} hos {company}.
                     Tonen skal være {tone_desc}.
-                    Brug denne analyse til at fremhæve de rigtige ting: {analysis_res.choices[0].message.content}
                     
-                    CV data: {cv_text}
+                    Brug denne analyse til at prioritere indholdet: {analysis_res.choices[0].message.content}
+                    
+                    CV: {cv_text}
                     Jobopslag: {job_text}
                     """
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ekspert i at skrive jobansøgninger på dansk."},
+                        messages=[{"role": "system", "content": "Du er ekspert i at skrive succesfulde jobansøgninger."},
                                   {"role": "user", "content": ans_prompt}]
                     )
                     ans_text = response.choices[0].message.content
@@ -148,23 +156,29 @@ with tabs[0]:
                     # Gem i database
                     conn = sqlite3.connect(db_path)
                     c = conn.cursor()
-                    c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone_level) VALUES (?, ?, ?, ?, ?, ?)",
-                              (datetime.now().strftime("%Y-%m-%d %H:%M"), company, title, ans_text, job_text, tone_val))
+                    c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?, ?, ?, ?, ?, ?)",
+                              (datetime.now().strftime("%Y-%m-%d %H:%M"), company, title, ans_text, job_text, selected_tone))
                     conn.commit()
                     conn.close()
                     
-                    st.subheader("📝 Genereret Ansøgning")
-                    st.success(f"Toneniveau: {tone_val}/5")
+                    st.subheader("📝 Din nye ansøgning")
+                    st.success(f"Genereret med stilen: {selected_tone}")
                     st.write(ans_text)
                     
-                    # Downloads (som før)
-                    # ... [Koden for download knapper herfra er den samme som tidligere version] ...
-                    st.download_button("Hent som PDF", create_pdf(ans_text), f"Ansøgning_{company}.pdf")
-
+                    # Downloads
+                    st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
+            
             except Exception as e:
-                st.error(f"Fejl: {e}")
+                st.error(f"Der opstod en fejl: {e}")
 
-# --- ARKIV FANEN ---
+# --- ARKIV ---
 with tabs[1]:
-    st.header("📁 Arkiv")
-    # ... [Samme arkiv logik som før] ...
+    st.header("📁 Gemte Ansøgninger")
+    if os.path.exists(db_path):
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
+        conn.close()
+        for i, row in df.iterrows():
+            with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+                st.write(f"**Valgt tone:** {row.get('tone', 'Ikke angivet')}")
+                st.write(row['ansogning'])
