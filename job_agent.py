@@ -13,7 +13,9 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
-db_path = "job_archive_v12.db"
+
+# Vi bruger et fast navn her, så arkivet ikke "nulstilles" ved opdateringer
+db_path = "job_agent_arkiv.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -52,7 +54,10 @@ def create_pdf(text):
     pdf.add_page()
     pdf.set_font("Arial", size=11)
     # Håndtering af specialtegn til PDF
-    clean_text = text.encode('latin-1', 'replace').decode('latin-1')
+    try:
+        clean_text = text.encode('latin-1', 'replace').decode('latin-1')
+    except:
+        clean_text = text.replace('–', '-').replace('—', '-')
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
 
@@ -79,9 +84,9 @@ def fill_word_template(template_file, content, company_name, job_title):
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("AI-drevet | ATS-optimeret | Word-skabelon integration")
+st.caption("Permanent Arkiv | ATS-Optimering | Word-Integration")
 
-tabs = st.tabs(["🚀 Generer Ansøgning", "📁 Arkiv"])
+tabs = st.tabs(["🚀 Ny Ansøgning", "📁 Arkiv"])
 
 with tabs[0]:
     with st.sidebar:
@@ -93,15 +98,14 @@ with tabs[0]:
         st.divider()
         st.subheader("🎭 Toneleje")
         tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
-        # Vigtigt: 'value' skal matche et element i 'options' præcis (stavefejl rettet her)
         selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balanceret")
         
         tone_prompts = {
             "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog.",
-            "Professionel": "saglig, forretningsorienteret og kompetent. Brug moderne erhvervssprog.",
-            "Balanceret": "professionel men imødekommende. God blanding af personlighed og faglighed.",
-            "Personlig": "varm, autentisk og fortællende. Fokus på dine værdier og motivation.",
-            "Kreativ": "modig, sprudlende og unik. Brug en stærk og fængende indledning."
+            "Professionel": "saglig, forretningsorienteret og kompetent.",
+            "Balanceret": "professionel men imødekommende. God blanding af personlighed og fag.",
+            "Personlig": "varm, autentisk og fortællende. Fokus på værdier.",
+            "Kreativ": "modig, sprudlende og unik. Brug en stærk krog i indledningen."
         }
 
     st.subheader("Job Detaljer")
@@ -114,9 +118,9 @@ with tabs[0]:
 
     if st.button("Analysér & Generér Ansøgning ✨"):
         if not api_key:
-            st.error("OpenAI API-nøgle mangler i Streamlit Secrets.")
+            st.error("OpenAI API-nøgle mangler i Secrets.")
         elif not uploaded_cv or not company or (not job_url and not job_desc_manual):
-            st.error("Udfyld venligst alle felter og upload dit CV.")
+            st.error("Udfyld venligst felter og upload CV.")
         else:
             try:
                 client = OpenAI(api_key=api_key)
@@ -128,42 +132,37 @@ with tabs[0]:
                         fetched = get_text_from_url(job_url)
                         if len(fetched) > 150: job_text = fetched
 
-                # --- TRIN 1: ATS & MATCH ANALYSE ---
+                # --- TRIN 1: ATS ANALYSE ---
                 with st.spinner("Kører ATS-scanning..."):
-                    analysis_prompt = f"Analysér jobopslaget og CV'et som en HR-robot (ATS). Find nøgleord og gaps.\nJob: {job_text[:2500]}\nCV: {cv_text[:2500]}"
+                    analysis_prompt = f"Analysér jobopslaget og CV'et som en HR-robot (ATS). Find nøgleord og gaps.\nJob: {job_text[:2000]}\nCV: {cv_text[:2000]}"
                     analysis_res = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ATS-ekspert og rekrutteringskonsulent."},
+                        messages=[{"role": "system", "content": "Du er en ATS-ekspert."},
                                   {"role": "user", "content": analysis_prompt}]
                     )
                     analysis_content = analysis_res.choices[0].message.content
                     st.info("📊 **ATS Match Analyse:**\n\n" + analysis_content)
 
                 # --- TRIN 2: GENERERING ---
-                with st.spinner(f"Skriver en {selected_tone.lower()} ansøgning..."):
+                with st.spinner(f"Skriver ansøgning..."):
                     tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
                     
-                    VIGTIGT - FORMATERING:
-                    1. Start DIREKTE med en overskrift eller 'Kære [Navn]'.
-                    2. INKLUDÉR IKKE dit eget navn, adresse, tlf eller mail i toppen.
-                    3. AFSLUT ansøgningen direkte efter det sidste tekstafsnit.
-                    4. INKLUDÉR IKKE 'Med venlig hilsen' eller dit navn til sidst.
+                    FORMATERING:
+                    - Start direkte med overskrift eller hilsen.
+                    - Ingen afsenderinfo i toppen.
+                    - Ingen 'Med venlig hilsen' eller navn til sidst.
                     
                     Tone: {tone_desc}
-                    
-                    Strategi:
-                    Brug denne analyse til at optimere indholdet og adressere eventuelle mangler proaktivt:
-                    {analysis_content}
-                    
-                    CV-data: {cv_text}
+                    Analyse: {analysis_content}
+                    CV: {cv_text}
                     Jobopslag: {job_text}
                     """
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ekspert i jobansøgninger, der kun leverer selve brødteksten uden top- eller bunddata."},
+                        messages=[{"role": "system", "content": "Du skriver kun selve brødteksten."},
                                   {"role": "user", "content": ans_prompt}]
                     )
                     ans_text = response.choices[0].message.content
@@ -177,29 +176,28 @@ with tabs[0]:
                     conn.close()
                     
                     st.divider()
-                    st.subheader("📝 Din Ansøgning")
+                    st.subheader("📝 Resultat")
                     st.write(ans_text)
                     
                     # DOWNLOADS
                     d1, d2, d3 = st.columns(3)
                     with d1:
                         if uploaded_template:
-                            # Her sender vi også 'title' med til Word-funktionen
                             w_file = fill_word_template(uploaded_template, ans_text, company, title)
                             if w_file:
                                 st.download_button("Hent Word-fil 📄", w_file, f"Ansogning_{company}.docx")
                         else:
-                            st.warning("Upload skabelon for at hente Word-fil")
+                            st.warning("Upload skabelon for Word")
                     with d2:
-                        st.download_button("Hent som ren PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
+                        st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
                     with d3:
-                        st.download_button("Hent gemt opslag (PDF)", create_pdf(job_text), f"Jobopslag_{company}.pdf")
+                        st.download_button("Hent Opslag (PDF)", create_pdf(job_text), f"Jobopslag_{company}.pdf")
             
             except Exception as e:
-                st.error(f"Der opstod en fejl: {e}")
+                st.error(f"Fejl: {e}")
 
 with tabs[1]:
-    st.header("📁 Arkiv")
+    st.header("📁 Permanent Arkiv")
     if os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
         df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
@@ -210,12 +208,12 @@ with tabs[1]:
         else:
             for i, row in df.iterrows():
                 with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        st.write("**Ansøgningstekt:**")
+                    ca, cb = st.columns(2)
+                    with ca:
+                        st.write("**Ansøgning:**")
                         st.write(row['ansogning'])
-                        st.download_button("Hent Tekst", row['ansogning'], f"Arkiv_{row['id']}.txt", key=f"ans_{row['id']}")
-                    with col_b:
-                        st.write("**Originalt Jobopslag:**")
+                        st.download_button("Hent Tekst", row['ansogning'], f"Arkiv_{row['id']}.txt", key=f"a_{row['id']}")
+                    with cb:
+                        st.write("**Jobopslag:**")
                         st.write(row['opslag'][:500] + "...")
-                        st.download_button("Hent Opslag (PDF)", create_pdf(row['opslag']), f"Opslag_{row['id']}.pdf", key=f"ops_{row['id']}")
+                        st.download_button("Hent Opslag (PDF)", create_pdf(row['opslag']), f"Opslag_{row['id']}.pdf", key=f"o_{row['id']}")
