@@ -56,24 +56,32 @@ def create_pdf(text):
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
 
-def fill_word_template(template_file, content, company_name):
+def fill_word_template(template_file, content, company_name, job_title):
     try:
         doc = Document(template_file)
         today_str = datetime.now().strftime("%d. %B %Y")
+        
+        # Her definerer vi alle de koder, som Python skal lede efter i din Word-fil
         data_map = {
             "{{ANSOGNING}}": content, 
             "{{VIRKSOMHED}}": company_name, 
+            "{{JOBTITEL}}": job_title,  # NY: Nu bliver denne også erstattet
             "{{DATO}}": today_str
         }
+        
         for p in doc.paragraphs:
             for key, value in data_map.items():
                 if key in p.text:
+                    # Vi erstatter koden med den rigtige tekst
                     p.text = p.text.replace(key, value)
+        
         target_stream = io.BytesIO()
         doc.save(target_stream)
         target_stream.seek(0)
         return target_stream
-    except: return None
+    except Exception as e:
+        st.error(f"Fejl ved udfyldning af Word: {e}")
+        return None
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
