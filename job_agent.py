@@ -83,7 +83,7 @@ with tabs[0]:
         else:
             try:
                 genai.configure(api_key=api_key)
-                model = genai.GenerativeModel('gemini-1.5-pro')
+                model = genai.GenerativeModel('gemini-pro')
                 
                 with st.spinner("AI Agenten analyserer og skriver..."):
                     prompt = f"Skriv en motiveret ansøgning til {title} hos {company}. CV: {user_cv}. Opslag: {job_desc}. Sproget skal være dansk og professionelt."
