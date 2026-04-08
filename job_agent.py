@@ -13,8 +13,6 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
-
-# Vi bruger et fast navn her, så arkivet ikke "nulstilles" ved opdateringer
 db_path = "job_agent_arkiv.db"
 
 def init_db():
@@ -53,7 +51,6 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=11)
-    # Håndtering af specialtegn til PDF
     try:
         clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     except:
@@ -84,7 +81,7 @@ def fill_word_template(template_file, content, company_name, job_title):
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("Permanent Arkiv | ATS-Optimering | Word-Integration")
+st.caption("Permanent Arkiv | ATS-Optimering | Personlige Input")
 
 tabs = st.tabs(["🚀 Ny Ansøgning", "📁 Arkiv"])
 
@@ -114,7 +111,16 @@ with tabs[0]:
     with c2: title = st.text_input("Jobtitel:")
     
     job_url = st.text_input("Link til jobopslag (URL):")
-    job_desc_manual = st.text_area("Eller indsæt jobtekst her:", height=150)
+    job_desc_manual = st.text_area("Eller indsæt jobtekst her:", height=100)
+    
+    # NYT FELT: PERSONLIGE INPUT
+    st.divider()
+    st.subheader("💡 Personlige noter (valgfrit)")
+    personal_notes = st.text_area(
+        "Er der noget specifikt AI'en skal nævne?", 
+        placeholder="F.eks.: 'Jeg talte med Mette fra HR i går', 'Jeg brænder særligt for jeres fokus på grøn energi', eller 'Jeg har 5 års erfaring med netop dette system'...",
+        help="Disse noter bliver vægtet højt i selve ansøgningen."
+    )
 
     if st.button("Analysér & Generér Ansøgning ✨"):
         if not api_key:
@@ -146,6 +152,10 @@ with tabs[0]:
                 # --- TRIN 2: GENERERING ---
                 with st.spinner(f"Skriver ansøgning..."):
                     tone_desc = tone_prompts[selected_tone]
+                    
+                    # Vi bygger en ekstra instruks hvis der er personlige noter
+                    personal_instruction = f"\nEKSTRA VIGTIGT: Inkorporér disse personlige noter naturligt i teksten: {personal_notes}" if personal_notes else ""
+                    
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
                     
@@ -155,7 +165,12 @@ with tabs[0]:
                     - Ingen 'Med venlig hilsen' eller navn til sidst.
                     
                     Tone: {tone_desc}
-                    Analyse: {analysis_content}
+                    {personal_instruction}
+                    
+                    Strategi:
+                    Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
+                    {analysis_content}
+                    
                     CV: {cv_text}
                     Jobopslag: {job_text}
                     """
