@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
-db_path = "job_archive_v10.db"
+db_path = "job_archive_v11.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -51,7 +51,6 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=11)
-    # Håndtering af specialtegn
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
@@ -60,32 +59,26 @@ def fill_word_template(template_file, content, company_name, job_title):
     try:
         doc = Document(template_file)
         today_str = datetime.now().strftime("%d. %B %Y")
-        
-        # Her definerer vi alle de koder, som Python skal lede efter i din Word-fil
         data_map = {
             "{{ANSOGNING}}": content, 
             "{{VIRKSOMHED}}": company_name, 
-            "{{JOBTITEL}}": job_title,  # NY: Nu bliver denne også erstattet
+            "{{JOBTITEL}}": job_title,
             "{{DATO}}": today_str
         }
-        
         for p in doc.paragraphs:
             for key, value in data_map.items():
                 if key in p.text:
-                    # Vi erstatter koden med den rigtige tekst
                     p.text = p.text.replace(key, value)
         
         target_stream = io.BytesIO()
         doc.save(target_stream)
         target_stream.seek(0)
         return target_stream
-    except Exception as e:
-        st.error(f"Fejl ved udfyldning af Word: {e}")
-        return None
+    except: return None
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("AI-drevet | ATS-optimeret | Match-analyse")
+st.caption("AI-drevet | ATS-optimeret | Skabelon-styret")
 
 tabs = st.tabs(["🚀 Generer Ansøgning", "📁 Arkiv"])
 
@@ -99,7 +92,7 @@ with tabs[0]:
         st.divider()
         st.subheader("🎭 Toneleje")
         tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
-        selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balanceret")
+        selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balancerer")
         
         tone_prompts = {
             "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog.",
@@ -149,15 +142,16 @@ with tabs[0]:
                     tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
-
+                    
                     VIGTIGT - FORMATERING:
-                    1. Start DIREKTE med en fængende overskrift eller "Kære [Navn]/[Virksomhed]".
-                    2. INKLUDÉR IKKE afsenderoplysninger (navn, adresse, tlf, mail) i toppen.
-                    3. AFSLUT DIREKTE efter det sidste tekstafsnit. 
-                    4. INKLUDÉR IKKE "Med venlig hilsen" eller dit navn til sidst, da dette allerede står i min skabelon.
+                    1. Start DIREKTE med en overskrift eller 'Kære [Navn]'.
+                    2. INKLUDÉR IKKE dit eget navn, adresse, tlf eller mail i toppen.
+                    3. AFSLUT ansøgningen direkte efter det sidste tekstafsnit.
+                    4. INKLUDÉR IKKE 'Med venlig hilsen' eller dit navn til sidst.
                     
                     Tone: {tone_desc}
                     
+                    Strategi:
                     Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
                     {analysis_content}
                     
@@ -167,7 +161,7 @@ with tabs[0]:
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en professionel karriererådgiver."},
+                        messages=[{"role": "system", "content": "Du er en professionel karriererådgiver, der kun skriver selve brødteksten til en ansøgning."},
                                   {"role": "user", "content": ans_prompt}]
                     )
                     ans_text = response.choices[0].message.content
@@ -188,7 +182,7 @@ with tabs[0]:
                     d1, d2, d3 = st.columns(3)
                     with d1:
                         if uploaded_template:
-                            w_file = fill_word_template(uploaded_template, ans_text, company)
+                            w_file = fill_word_template(uploaded_template, ans_text, company, title)
                             if w_file:
                                 st.download_button("Hent Word-fil 📄", w_file, f"Ansøgning_{company}.docx")
                         else:
