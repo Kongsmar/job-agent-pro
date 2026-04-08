@@ -142,9 +142,12 @@ with tabs[0]:
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
 
-                    VIGTIGT: Start direkte med selve ansøgningsteksten (f.eks. "Kære [Navn]"). 
-                    INKLUDÉR IKKE navn, adresse, tlf eller e-mail øverst, da dette allerede er i min skabelon. Inkluder ej heller med venlig hilsen og mit navn, da det også er i min skabelon.
-
+                    VIGTIGT - FORMATERING:
+                    1. Start DIREKTE med en fængende overskrift eller "Kære [Navn]/[Virksomhed]".
+                    2. INKLUDÉR IKKE afsenderoplysninger (navn, adresse, tlf, mail) i toppen.
+                    3. AFSLUT DIREKTE efter det sidste tekstafsnit. 
+                    4. INKLUDÉR IKKE "Med venlig hilsen" eller dit navn til sidst, da dette allerede står i min skabelon.
+                    
                     Tone: {tone_desc}
                     
                     Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
