@@ -12,8 +12,8 @@ from fpdf import FPDF
 from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - ATS Optimized", page_icon="💼", layout="wide")
-db_path = "job_archive_v9.db"
+st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
+db_path = "job_archive_final.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -55,92 +55,125 @@ def create_pdf(text):
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
 
+def fill_word_template(template_file, content, company_name):
+    try:
+        doc = Document(template_file)
+        # Sørger for at datoen altid er i dagens format
+        today_str = datetime.now().strftime("%d. %B %Y")
+        
+        data_map = {
+            "{{ANSOGNING}}": content, 
+            "{{VIRKSOMHED}}": company_name, 
+            "{{DATO}}": today_str
+        }
+        
+        # Gennemgå alle afsnit og erstat koder
+        for p in doc.paragraphs:
+            for key, value in data_map.items():
+                if key in p.text:
+                    p.text = p.text.replace(key, value)
+        
+        target_stream = io.BytesIO()
+        doc.save(target_stream)
+        target_stream.seek(0)
+        return target_stream
+    except Exception as e:
+        st.error(f"Fejl ved udfyldning af Word: {e}")
+        return None
+
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("Optimeret til at passere ATS-systemer og HR-robotter")
+st.caption("AI-drevet ansøgningsværktøj | ATS & HR-Robot Optimeret")
 
-tabs = st.tabs(["🚀 Analyse & Ansøgning", "📁 Arkiv"])
+tabs = st.tabs(["🚀 Generer Ansøgning", "📁 Arkiv"])
 
 with tabs[0]:
     with st.sidebar:
-        st.header("⚙️ Konfiguration")
+        st.header("⚙️ Indstillinger")
         api_key = st.secrets.get("OPENAI_API_KEY")
         uploaded_cv = st.file_uploader("1. Upload dit CV (PDF)", type="pdf")
+        uploaded_template = st.file_uploader("2. Upload Word-skabelon (.docx)", type="docx")
         
         st.divider()
-        st.subheader("🎭 Personligheds-filter")
+        st.subheader("🎭 Toneleje")
         tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
-        selected_tone = st.select_slider("Vælg toneleje:", options=tone_options, value="Balanceret")
+        selected_tone = st.select_slider(
+            "Vælg stil:", 
+            options=tone_options, 
+            value="Balanceret"
+        )
         
         tone_prompts = {
-            "Meget Formel": "meget formel, korrekt og konservativ.",
-            "Professionel": "saglig, forretningsorienteret og kompetent.",
-            "Balanceret": "professionel men imødekommende og balanceret.",
-            "Personlig": "varm, autentisk og fortællende.",
-            "Kreativ": "modig, sprudlende og unik."
+            "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog.",
+            "Professionel": "saglig, forretningsorienteret og kompetent. Moderne erhvervssprog.",
+            "Balanceret": "professionel men imødekommende. God blanding af personlighed og fag.",
+            "Personlig": "varm, autentisk og fortællende. Fokus på værdier og motivation.",
+            "Kreativ": "modig, sprudlende og unik. Brug en stærk krog i indledningen."
         }
 
     st.subheader("Job Detaljer")
     c1, c2 = st.columns(2)
-    with c1: company = st.text_input("Virksomhed:")
+    with c1: company = st.text_input("Virksomhedens navn:")
     with c2: title = st.text_input("Jobtitel:")
     
-    job_url = st.text_input("Link til jobopslag:")
+    job_url = st.text_input("Link til jobopslag (URL):")
     job_desc_manual = st.text_area("Eller indsæt jobtekst her:", height=150)
 
-    if st.button("Kør ATS-Analyse & Skriv Ansøgning ✨"):
-        if not api_key or not uploaded_cv or (not job_url and not job_desc_manual):
-            st.error("Udfyld venligst alle felter.")
+    if st.button("Analysér & Generér Ansøgning ✨"):
+        if not api_key:
+            st.error("OpenAI API-nøgle mangler i Streamlit Secrets.")
+        elif not uploaded_cv or not company or (not job_url and not job_desc_manual):
+            st.error("Husk at uploade CV og udfylde jobdetaljer.")
         else:
             try:
                 client = OpenAI(api_key=api_key)
                 cv_text = extract_text_from_pdf(uploaded_cv)
+                
                 job_text = job_desc_manual
                 if job_url:
-                    with st.spinner("Henter jobbeskrivelse..."):
-                        url_text = get_text_from_url(job_url)
-                        if len(url_text) > 100: job_text = url_text
+                    with st.spinner("Henter tekst fra jobopslag..."):
+                        fetched = get_text_from_url(job_url)
+                        if len(fetched) > 150: job_text = fetched
 
-                # --- TRIN 1: ATS & MATCH ANALYSE ---
-                st.divider()
-                with st.spinner("Udfører ATS-scanning..."):
+                # --- TRIN 1: ATS ANALYSE ---
+                with st.spinner("Kører ATS-scanning og match-analyse..."):
                     analysis_prompt = f"""
-                    Du er en ATS-optimeringsmaskine (HR-robot). Analyser følgende:
-                    1. Identificer de 5 vigtigste nøgleord (hard skills/teknologier) fra jobopslaget.
-                    2. Hvilke 'bløde' kompetencer efterspørges mest?
-                    3. Find de største 'gaps' mellem CV og jobopslag.
+                    Analysér jobopslaget og CV'et som en HR-robot (ATS):
+                    1. List de 5 vigtigste nøgleord (kompetencer/software/metoder).
+                    2. Identificér mangler (gaps) i CV'et ift. jobbet.
+                    3. Giv en kort vurdering af matchet.
                     
                     Job: {job_text[:2500]}
                     CV: {cv_text[:2500]}
                     """
-                    
                     analysis_res = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ekspert i HR-teknologi og ATS-screening."},
+                        messages=[{"role": "system", "content": "Du er en ATS-ekspert."},
                                   {"role": "user", "content": analysis_prompt}]
                     )
-                    st.subheader("📊 ATS Match Analyse")
-                    st.info(analysis_res.choices[0].message.content)
+                    analysis_content = analysis_res.choices[0].message.content
+                    st.info("📊 **ATS Match Analyse:**\n\n" + analysis_content)
 
-                # --- TRIN 2: ATS-OPTIMERET ANSØGNING ---
-                with st.spinner("Skriver ansøgning..."):
+                # --- TRIN 2: GENERERING ---
+                with st.spinner("Skriver din optimerede ansøgning..."):
                     tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
-                    Skriv en ansøgning til {title} hos {company}. 
+                    Skriv en målrettet ansøgning til {title} hos {company}.
                     
-                    REGLER FOR ATS-OPTIMERING:
-                    1. Implementér naturligt de vigtigste nøgleord fundet i analysen: {analysis_res.choices[0].message.content}.
-                    2. Tone: {tone_desc}.
-                    3. Struktur: Sørg for at adressere 'gaps' ved at fokusere på hurtig indlæring eller overførbare evner.
-                    4. Sørg for at sproget er menneskeligt og fængende, selvom nøgleordene er med.
+                    TONE: {tone_desc}
                     
+                    ATS-STRATEGI:
+                    - Inkorporér nøgleord naturligt fra analysen.
+                    - Adressér proaktivt eventuelle mangler i CV'et ved at fokusere på motivation eller lignende kompetencer.
+                    
+                    Analyse: {analysis_content}
                     CV: {cv_text}
                     Jobopslag: {job_text}
                     """
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en professionel dansk karriererådgiver specialiseret i at omgå screening-robotter."},
+                        messages=[{"role": "system", "content": "Du er en professionel karriererådgiver."},
                                   {"role": "user", "content": ans_prompt}]
                     )
                     ans_text = response.choices[0].message.content
@@ -153,9 +186,18 @@ with tabs[0]:
                     conn.commit()
                     conn.close()
                     
-                    st.subheader("📝 Din ATS-Optimerede Ansøgning")
+                    st.divider()
+                    st.subheader("📝 Resultat")
                     st.write(ans_text)
-                    st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
-            
-            except Exception as e:
-                st.error(f"Fejl: {e}")
+                    
+                    # DOWNLOAD SEKTION
+                    st.divider()
+                    d1, d2, d3 = st.columns(3)
+                    with d1:
+                        if uploaded_template:
+                            w_file = fill_word_template(uploaded_template, ans_text, company)
+                            if w_file:
+                                st.download_button("Hent Word-fil 📄", w_file, f"Ansogning_{company}.docx")
+                        else:
+                            st.warning("Upload skabelon for Word-fil")
+                    with d2:
