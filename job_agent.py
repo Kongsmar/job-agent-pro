@@ -141,6 +141,10 @@ with tabs[0]:
                     tone_desc = tone_prompts[selected_tone]
                     ans_prompt = f"""
                     Skriv en målrettet ansøgning til {title} hos {company}.
+
+                    VIGTIGT: Start direkte med selve ansøgningsteksten (f.eks. "Kære [Navn]"). 
+                    INKLUDÉR IKKE navn, adresse, tlf eller e-mail øverst, da dette allerede er i min skabelon.
+
                     Tone: {tone_desc}
                     
                     Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
