@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master", page_icon="💼", layout="wide")
-db_path = "job_archive_v11.db"
+db_path = "job_archive_v12.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -51,6 +51,7 @@ def create_pdf(text):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=11)
+    # Håndtering af specialtegn til PDF
     clean_text = text.encode('latin-1', 'replace').decode('latin-1')
     pdf.multi_cell(0, 8, txt=clean_text)
     return pdf.output(dest='S').encode('latin-1')
@@ -78,7 +79,7 @@ def fill_word_template(template_file, content, company_name, job_title):
 
 # --- APP LAYOUT ---
 st.title("💼 Job Agent Pro")
-st.caption("AI-drevet | ATS-optimeret | Skabelon-styret")
+st.caption("AI-drevet | ATS-optimeret | Word-skabelon integration")
 
 tabs = st.tabs(["🚀 Generer Ansøgning", "📁 Arkiv"])
 
@@ -92,14 +93,15 @@ with tabs[0]:
         st.divider()
         st.subheader("🎭 Toneleje")
         tone_options = ["Meget Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"]
-        selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balancerer")
+        # Vigtigt: 'value' skal matche et element i 'options' præcis (stavefejl rettet her)
+        selected_tone = st.select_slider("Vælg stil:", options=tone_options, value="Balanceret")
         
         tone_prompts = {
             "Meget Formel": "meget formel, korrekt og konservativ. Brug et højtideligt sprog.",
-            "Professionel": "saglig, forretningsorienteret og kompetent.",
-            "Balanceret": "professionel men imødekommende. God blanding af personlighed og fag.",
-            "Personlig": "varm, autentisk og fortællende. Fokus på værdier.",
-            "Kreativ": "modig, sprudlende og unik. Brug en stærk krog i indledningen."
+            "Professionel": "saglig, forretningsorienteret og kompetent. Brug moderne erhvervssprog.",
+            "Balanceret": "professionel men imødekommende. God blanding af personlighed og faglighed.",
+            "Personlig": "varm, autentisk og fortællende. Fokus på dine værdier og motivation.",
+            "Kreativ": "modig, sprudlende og unik. Brug en stærk og fængende indledning."
         }
 
     st.subheader("Job Detaljer")
@@ -112,7 +114,7 @@ with tabs[0]:
 
     if st.button("Analysér & Generér Ansøgning ✨"):
         if not api_key:
-            st.error("OpenAI API-nøgle mangler i Secrets.")
+            st.error("OpenAI API-nøgle mangler i Streamlit Secrets.")
         elif not uploaded_cv or not company or (not job_url and not job_desc_manual):
             st.error("Udfyld venligst alle felter og upload dit CV.")
         else:
@@ -128,10 +130,10 @@ with tabs[0]:
 
                 # --- TRIN 1: ATS & MATCH ANALYSE ---
                 with st.spinner("Kører ATS-scanning..."):
-                    analysis_prompt = f"Analysér jobopslaget og CV'et som en HR-robot (ATS). Find nøgleord og gaps.\nJob: {job_text[:2000]}\nCV: {cv_text[:2000]}"
+                    analysis_prompt = f"Analysér jobopslaget og CV'et som en HR-robot (ATS). Find nøgleord og gaps.\nJob: {job_text[:2500]}\nCV: {cv_text[:2500]}"
                     analysis_res = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en ATS-ekspert."},
+                        messages=[{"role": "system", "content": "Du er en ATS-ekspert og rekrutteringskonsulent."},
                                   {"role": "user", "content": analysis_prompt}]
                     )
                     analysis_content = analysis_res.choices[0].message.content
@@ -152,16 +154,16 @@ with tabs[0]:
                     Tone: {tone_desc}
                     
                     Strategi:
-                    Brug denne analyse til at optimere indholdet og adressere eventuelle mangler:
+                    Brug denne analyse til at optimere indholdet og adressere eventuelle mangler proaktivt:
                     {analysis_content}
                     
-                    CV: {cv_text}
+                    CV-data: {cv_text}
                     Jobopslag: {job_text}
                     """
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Du er en professionel karriererådgiver, der kun skriver selve brødteksten til en ansøgning."},
+                        messages=[{"role": "system", "content": "Du er en ekspert i jobansøgninger, der kun leverer selve brødteksten uden top- eller bunddata."},
                                   {"role": "user", "content": ans_prompt}]
                     )
                     ans_text = response.choices[0].message.content
@@ -182,18 +184,19 @@ with tabs[0]:
                     d1, d2, d3 = st.columns(3)
                     with d1:
                         if uploaded_template:
+                            # Her sender vi også 'title' med til Word-funktionen
                             w_file = fill_word_template(uploaded_template, ans_text, company, title)
                             if w_file:
-                                st.download_button("Hent Word-fil 📄", w_file, f"Ansøgning_{company}.docx")
+                                st.download_button("Hent Word-fil 📄", w_file, f"Ansogning_{company}.docx")
                         else:
-                            st.warning("Upload skabelon for Word")
+                            st.warning("Upload skabelon for at hente Word-fil")
                     with d2:
-                        st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansøgning_{company}.pdf")
+                        st.download_button("Hent som ren PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
                     with d3:
-                        st.download_button("Hent Opslag (PDF)", create_pdf(job_text), f"Opslag_{company}.pdf")
+                        st.download_button("Hent gemt opslag (PDF)", create_pdf(job_text), f"Jobopslag_{company}.pdf")
             
             except Exception as e:
-                st.error(f"Fejl: {e}")
+                st.error(f"Der opstod en fejl: {e}")
 
 with tabs[1]:
     st.header("📁 Arkiv")
@@ -203,16 +206,16 @@ with tabs[1]:
         conn.close()
         
         if df.empty:
-            st.info("Arkivet er tomt.")
+            st.info("Arkivet er tomt endnu.")
         else:
             for i, row in df.iterrows():
                 with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.write("**Ansøgning:**")
+                        st.write("**Ansøgningstekt:**")
                         st.write(row['ansogning'])
                         st.download_button("Hent Tekst", row['ansogning'], f"Arkiv_{row['id']}.txt", key=f"ans_{row['id']}")
                     with col_b:
-                        st.write("**Originalt Opslag:**")
+                        st.write("**Originalt Jobopslag:**")
                         st.write(row['opslag'][:500] + "...")
                         st.download_button("Hent Opslag (PDF)", create_pdf(row['opslag']), f"Opslag_{row['id']}.pdf", key=f"ops_{row['id']}")
