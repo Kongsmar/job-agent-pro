@@ -55,8 +55,6 @@ def fill_docx(template, content, company, title, contact_person):
     try:
         template.seek(0)
         doc = Document(template)
-        
-        # Ordbog over alle de tags vi leder efter
         data = {
             "{{ANSOGNING}}": content, 
             "{{VIRKSOMHED}}": company, 
@@ -64,37 +62,29 @@ def fill_docx(template, content, company, title, contact_person):
             "{{KONTAKTPERSON}}": contact_person,
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
-        
-        # Funktion til at gennemgå paragraffer og erstatte tags korrekt
-        def replace_text_in_paragraphs(paragraphs):
+        def replace_text(paragraphs):
             for p in paragraphs:
                 for key, value in data.items():
                     if key in p.text:
-                        # Denne metode bevarer formatering bedre og sikrer erstatning
-                        inline = p.runs
-                        for i in range(len(inline)):
-                            if key in inline[i].text:
-                                inline[i].text = inline[i].text.replace(key, str(value))
-                        # Hvis tagget var splittet over flere runs, bruger vi denne fallback:
+                        # Prøv run-by-run først for at bevare formatering
+                        for run in p.runs:
+                            if key in run.text:
+                                run.text = run.text.replace(key, str(value))
+                        # Fallback hvis tagget er splittet over flere runs
                         if key in p.text:
                             p.text = p.text.replace(key, str(value))
 
-        # Kør erstatning i hovedteksten
-        replace_text_in_paragraphs(doc.paragraphs)
-        
-        # Kør erstatning i alle tabeller (hvis tags står i en tabel)
+        replace_text(doc.paragraphs)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
-                    replace_text_in_paragraphs(cell.paragraphs)
+                    replace_text(cell.paragraphs)
         
         buf = io.BytesIO()
         doc.save(buf)
         buf.seek(0)
         return buf
-    except Exception as e:
-        st.error(f"Word-fejl: {e}")
-        return None
+    except: return None
 
 # --- APP FLOW ---
 st.title("🚀 Job Agent Pro")
@@ -140,42 +130,56 @@ elif st.session_state.step == 3:
     length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
-    mirror = st.toggle("Spejl sprogbrug", True)
-    motivation = st.radio("Motivationens placering:", ["I starten", "I bunden"])
+    motivation_pos = st.radio("Hvor skal din motivation (hvorfor dig/hvorfor dem) placeres?", ["I starten (krogen)", "I bunden (opsamlingen)"], index=0)
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
-    if col2.button("Generér Pakke ✨"):
-        st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mirror": mirror, "mot": motivation}
+    if col2.button("Generér Alt ✨"):
+        st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": motivation_pos}
         next_step()
         st.rerun()
 
 elif st.session_state.step == 4:
     st.header("4. Analyse & Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Udfører analyse og skriver din ansøgning..."):
+        with st.spinner("Kører ATS-analyse og skriver alt indhold..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
                 # ATS ANALYSE
-                ats_p = f"Analysér dette jobopslag mod dette CV. Giv mig 3 nøgleord og en Match Score i %.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
+                ats_p = f"Analysér jobopslag mod CV. Find 3 vigtigste nøgleord og Match Score.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
                 # HOVED PROMPT
-                len_instr = "450-600 ord (4-5 afsnit)" if p['len'] == "Standard" else "250-350 ord" if p['len'] == "Kort" else "750+ ord"
+                len_instr = "ca. 500 ord" if p['len'] == "Standard" else "ca. 300 ord" if p['len'] == "Kort" else "ca. 750 ord"
+                
                 main_prompt = f"""
-                Skriv en komplet pakke i JSON.
-                'ansogning': Skriv KUN brødteksten. Ingen hilsen/afsked. Længde: {len_instr}. 
-                'pitch': 3-4 sætninger til LinkedIn.
-                'interview': 3 mest kritiske spørgsmål.
-                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
+                Du er en rekrutteringsekspert. Lav en pakke i JSON format.
+                
+                VIGTIG REGEL FOR MOTIVATION: 
+                Brugeren har valgt at motivationen SKAL placeres: {p['mot_pos']}. 
+                Hvis 'I starten', skal første afsnit forklare HVORFOR de søger netop dette job.
+                Hvis 'I bunden', skal de faglige argumenter komme først, og motivationen gemmes til sidst.
+
+                JSON NØGLER:
+                1. 'ansogning': Skriv kun fyldig brødtekst (Længde: {len_instr}). Ingen hilsner/afsked. Fokus: {p['fokus']}. Strategi: {p['strat']}.
+                2. 'pitch': En 3-4 sætningers besked til LinkedIn.
+                3. 'interview': En liste med de 3 mest relevante spørgsmål og korte råd til svar.
+                
+                DATA:
+                - CV: {st.session_state.cv_text}
+                - JOB: {st.session_state.opslag}
+                - ANALYSE: {st.session_state.ats_result}
+                - NOTER: {st.session_state.noter}
                 """
+                
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar kun i JSON."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du svarer altid i korrekt JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
+                
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
                 
                 # Gem i arkiv
@@ -183,31 +187,27 @@ elif st.session_state.step == 4:
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
+                
             except Exception as e:
-                st.error(f"Fejl: {e}")
+                st.error(f"Fejl under generering: {e}")
 
     if "final_res" in st.session_state:
-        st.info(f"📊 **ATS Analyse:** {st.session_state.ats_result}")
+        st.info(f"📊 **ATS Analyse:**\n{st.session_state.ats_result}")
+        res = st.session_state.final_res
         c_main, c_side = st.columns([2, 1])
+        
         with c_main:
-            st.subheader("📝 Brødtekst")
-            st.write(st.session_state.final_res['ansogning'])
+            st.subheader("📝 Ansøgning")
+            st.write(res.get('ansogning', 'Fejl i ansøgning'))
             if st.session_state.temp:
-                doc = fill_docx(st.session_state.temp, st.session_state.final_res['ansogning'], st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_side:
-            st.subheader("✉️ Ekstra")
-            st.success("**Pitch:**\n" + st.session_state.final_res['pitch'])
-            st.warning("**Interview:**\n" + st.session_state.final_res['interview'])
-        
+            st.subheader("✉️ LinkedIn Pitch")
+            st.success(res.get('pitch', 'Fejl i pitch'))
+            st.subheader("🎤 Interview Prep")
+            # Vi sikrer os at interview vises korrekt, uanset om det er liste eller tekst
+            st.warning(res.get('interview', 'Fejl i interview prep'))
+            
         if st.button("Start forfra 🔄"): reset(); st.rerun()
-
-# --- ARKIV ---
-st.divider()
-with st.expander("📂 Arkiv"):
-    if os.path.exists(db_path):
-        conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
-        for _, r in df.iterrows():
-            with st.expander(f"📌 {r['company']} - {r['title']} ({r['date']})"):
-                st.write(r['ansogning'])
