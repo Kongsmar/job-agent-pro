@@ -149,38 +149,35 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Udfører dybdegående ATS-analyse og skriver..."):
+        with st.spinner("Udfører analyse og skriver din pakke..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # --- DEDIKERET ATS ANALYSE ---
-                ats_p = f"""Foretag en grundig ATS-analyse af CV vs Jobopslag. 
-                Svaret skal indeholde:
-                1. Match Score i % (f.eks. 85%).
-                2. De 3 vigtigste nøgleord fundet i jobopslaget.
-                3. Top 3 styrker i matchet.
-                4. Top 3 mangler/huller (hvad skal forklares/kompenseres for).
-                
-                CV: {st.session_state.cv_text[:2000]}
-                Job: {st.session_state.opslag[:2000]}"""
-                
+                # ATS ANALYSE
+                ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # --- HOVED GENERERING ---
+                # HOVED GENERERING - MED STRAMME RESTRIKTIONER
                 main_prompt = f"""
-                Lav en JSON pakke på dansk:
-                'overskrift': En '{p['headline_type']}' overskrift (kun stort begyndelsesbogstav).
-                'ansogning': En FYLDIG brødtekst (ca. 500 ord). Brug dobbelt linjeskift. Motivation: {p['mot_pos']}.
-                'pitch': 3-4 sætninger til LinkedIn.
-                'interview': 3 kritiske spørgsmål og strategiske svar-tips i punktform (-).
+                Du er en elite-rekrutteringskonsulent. Lav en JSON pakke på dansk.
                 
+                STRENG REGL OM FORM:
+                1. 'ansogning': Skriv KUN selve brødteksten. Start direkte med indledningen. 
+                   DU MÅ IKKE skrive "Kære...", "Kære [Navn]", "Ansøgning til...", "Venlig hilsen" eller navne til sidst. 
+                   Hvis du skriver hilsner, fejler systemet. Længde: ca. 500 ord.
+                2. 'overskrift': Skal være en '{p['headline_type']}'. Den skal afspejle indholdet i ansøgningen og ansøgerens unikke vinkel, ikke bare kopiere jobtitlen. Kun stort begyndelsesbogstav.
+                3. 'pitch': 3-4 sætninger til LinkedIn.
+                4. 'interview': 3 spørgsmål og svar-tips i punktform (-).
+                
+                STRATEGI: Tone: {p['tone']}, Fokus: {p['fokus']}, Motivation: {p['mot_pos']}.
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
+                
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er en elite-rekrutteringskonsulent. Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du leverer kun rå tekst uden hilsner i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -196,7 +193,6 @@ elif st.session_state.step == 4:
     if "final_res" in st.session_state:
         res = st.session_state.final_res
         
-        # VISNING AF DEN UDVIDEDE ANALYSE
         with st.expander("📊 Se udvidet ATS & Match Analyse", expanded=True):
             st.markdown(st.session_state.ats_result)
         
@@ -204,7 +200,10 @@ elif st.session_state.step == 4:
         with c_m:
             headline_final = res.get('overskrift', '').strip().capitalize()
             st.markdown(f"### {headline_final}")
+            st.divider()
+            st.subheader("📝 Ansøgning (Brødtekst)")
             st.write(res.get('ansogning', ''))
+            
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
