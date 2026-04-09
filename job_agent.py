@@ -51,10 +51,16 @@ def extract_pdf(file):
         return "".join([p.extract_text() for p in reader.pages])
     except: return ""
 
-def fill_docx(template, content, company, title):
+def fill_docx(template, content, company, title, contact_person):
     try:
         doc = Document(template)
-        data = {"{{ANSOGNING}}": content, "{{VIRKSOMHED}}": company, "{{JOBTITEL}}": title, "{{DATO}}": datetime.now().strftime("%d. %m. %Y")}
+        data = {
+            "{{ANSOGNING}}": content, 
+            "{{VIRKSOMHED}}": company, 
+            "{{JOBTITEL}}": title, 
+            "{{KONTAKTPERSON}}": contact_person,
+            "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
+        }
         for p in doc.paragraphs:
             for k, v in data.items():
                 if k in p.text: p.text = p.text.replace(k, v)
@@ -73,15 +79,19 @@ if st.session_state.step == 1:
     st.header("1. Grundlaget")
     cv = st.file_uploader("Upload dit CV (PDF)", type="pdf")
     temp = st.file_uploader("Upload din Word-skabelon (.docx)", type="docx")
+    
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhedens navn:")
     titl = c2.text_input("Hvilken stilling søger du?")
+    
+    contact = st.text_input("Kontaktperson (f.eks. 'Mette Jensen' eller 'Ansættelsesudvalget'):", placeholder="Hvem skal ansøgningen stiles til?")
     
     if st.button("Fortsæt til jobopslag →", disabled=not (cv and comp and titl)):
         st.session_state.cv_text = extract_pdf(cv)
         st.session_state.temp = temp
         st.session_state.comp = comp
         st.session_state.titl = titl
+        st.session_state.contact = contact
         next_step()
         st.rerun()
 
@@ -136,7 +146,7 @@ elif st.session_state.step == 4:
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 
-                # TRIN A: ATS ANALYSE
+                # ATS ANALYSE
                 analysis_prompt = f"Analysér jobopslag mod CV. Find top 3 nøgleord og 1 kritisk gap.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
                 analysis_res = client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -144,18 +154,18 @@ elif st.session_state.step == 4:
                 )
                 ats_info = analysis_res.choices[0].message.content
                 
-                # TRIN B: HOVEDGENERERING
+                # HOVEDGENERERING
                 p = st.session_state.p
                 main_prompt = f"""
                 Du er en ekspert i rekruttering. Skriv en målrettet ansøgning til {st.session_state.titl} hos {st.session_state.comp}.
                 
-                STRATEGI:
+                STIL:
+                - Kontaktperson: {st.session_state.contact} (Stil ansøgningen direkte til denne person).
                 - Tone: {p['tone']}
-                - Længde: {p['len']} (ca. {'300' if p['len']=='Kort' else '500' if p['len']=='Standard' else '700'} ord)
-                - Indledning: {p['strat']}
+                - Længde: {p['len']}
+                - Strategi: {p['strat']}
                 - Fokus: {p['fokus']}
                 - Motivation: {p['mot']}
-                - Spejl sprog: {p['mirror']}
                 
                 KONTEKST:
                 - ATS Analyse: {ats_info}
@@ -164,8 +174,9 @@ elif st.session_state.step == 4:
                 - Jobopslag: {st.session_state.opslag}
                 
                 REGLER:
-                - Skriv kun selve ansøgningen i feltet 'ansogning'. 
-                - Ingen afsender/modtager info.
+                - Start med en professionel hilsen til {st.session_state.contact}.
+                - Skriv en fyldestgørende ansøgning.
+                - Ingen afsenderinfo i toppen.
                 """
                 
                 resp = client.chat.completions.create(
@@ -195,7 +206,7 @@ elif st.session_state.step == 4:
             st.subheader("📝 Ansøgning")
             st.write(st.session_state.final_res['ansogning'])
             if st.session_state.temp:
-                doc_file = fill_docx(st.session_state.temp, st.session_state.final_res['ansogning'], st.session_state.comp, st.session_state.titl)
+                doc_file = fill_docx(st.session_state.temp, st.session_state.final_res['ansogning'], st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word-fil 📄", doc_file, f"Ansøgning_{st.session_state.comp}.docx")
         
         with col_side:
@@ -207,13 +218,11 @@ elif st.session_state.step == 4:
 
 # --- ARKIV ---
 st.divider()
-with st.expander("📂 Se Arkiv (Ansøgninger & Jobopslag)"):
+with st.expander("📂 Se Arkiv"):
     if os.path.exists(db_path):
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
-        conn.close()
+        conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
         for _, r in df.iterrows():
             with st.expander(f"📌 {r['company']} - {r['title']} ({r['date']})"):
                 c1, c2 = st.columns(2)
-                c1.markdown("**Ansøgning:**"); c1.write(r['ansogning'])
-                c2.markdown("**Jobopslag:**"); c2.write(r['opslag'])
+                c1.write("**Ansøgning:**"); c1.write(r['ansogning'])
+                c2.write("**Jobopslag:**"); c2.write(r['opslag'])
