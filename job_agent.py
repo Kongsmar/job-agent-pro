@@ -14,7 +14,7 @@ import urllib.parse
 import re
 
 # --- KONFIGURATION ---
-st.set_page_config(page_title="Job Agent Pro - Gold Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - Full Edition", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def init_db():
@@ -39,47 +39,46 @@ def extract_pdf_text(file):
         return "".join([p.extract_text() for p in reader.pages])
     except: return ""
 
+def get_text_from_url(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        r = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        for s in soup(["script", "style"]): s.extract()
+        return soup.get_text(separator=' ', strip=True)
+    except: return "Kunne ikke hente tekst fra linket."
+
 def clean_ai_text(text):
-    """Fjerner hilsner og sikrer ren brødtekst."""
     if not text: return ""
-    # Fjern JSON-rester hvis AI fejler
-    text = re.sub(r'["{}]', '', text) if "ansogning" not in text else text
     lines = text.split('\n')
     bad_starts = ['kære', 'med venlig hilsen', 'venlig hilsen', 'mvh', 'hilsen', 'til ', 'emne:', 'vedrør:']
     cleaned = [l for l in lines if not any(l.lower().strip().startswith(bw) for bw in bad_starts)]
     return '\n'.join(cleaned).strip()
 
 def fill_docx(template, content, headline, company, title, contact):
-    """Ekstremt robust Word-fletning."""
     try:
         if not content: return None
         template.seek(0)
         doc = Document(template)
         
-        # Sikr at alt er tekst
-        clean_content = str(content)
-        clean_headline = str(headline).strip().upper()
-        
         replacements = {
             "{{VIRKSOMHED}}": str(company),
             "{{JOBTITEL}}": str(title),
             "{{KONTAKTPERSON}}": str(contact),
-            "{{OVERSKRIFT}}": clean_headline,
+            "{{OVERSKRIFT}}": str(headline).upper(),
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
 
         for p in doc.paragraphs:
-            # Erstat placeholders i eksisterende linjer
+            # Erstat tags i selve linjen
             for key, val in replacements.items():
                 if key in p.text:
                     p.text = p.text.replace(key, val)
             
-            # Indsæt ansøgning med korrekt afsnitsdeling
+            # Indsæt ansøgning ved placeholder - bevarer afsnit
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
-                parent = p._element.getparent()
-                # Split tekst ved linjeskift og lav nye afsnit
-                for line in clean_content.split('\n'):
+                for line in str(content).split('\n'):
                     if line.strip():
                         new_p = doc.add_paragraph(line.strip(), style=p.style)
                         p._element.addnext(new_p._element)
@@ -92,89 +91,82 @@ def fill_docx(template, content, headline, company, title, contact):
         st.error(f"Word Fejl: {e}")
         return None
 
-# --- APP LOGIK ---
+# --- APP FLOW ---
 if 'step' not in st.session_state: st.session_state.step = 1
 
 st.title("💼 Job Agent Pro")
 st.progress(st.session_state.step / 4)
 
+# STEP 1: CV OG SKABELON
 if st.session_state.step == 1:
-    st.header("1. Upload & Info")
+    st.header("1. Grundlag")
     cv_file = st.file_uploader("Upload dit CV (PDF)", type="pdf")
     docx_file = st.file_uploader("Upload Word-skabelon (.docx)", type="docx")
     c1, c2 = st.columns(2)
-    comp = c1.text_input("Virksomhed")
-    titl = c2.text_input("Stilling")
-    cont = st.text_input("Kontaktperson")
+    st.session_state.comp = c1.text_input("Virksomhed", value=st.session_state.get('comp', ""))
+    st.session_state.titl = c2.text_input("Stilling", value=st.session_state.get('titl', ""))
+    st.session_state.contact = st.text_input("Kontaktperson", value=st.session_state.get('contact', ""))
     
-    if st.button("Næste →") and cv_file and comp:
+    if st.button("Næste →") and cv_file and st.session_state.comp:
         st.session_state.cv_text = extract_pdf_text(cv_file)
         st.session_state.temp = docx_file
-        st.session_state.comp = comp
-        st.session_state.titl = titl
-        st.session_state.contact = cont
         st.session_state.step = 2
         st.rerun()
 
+# STEP 2: JOBOPSLAG (INKL. LINK FUNKTION)
 elif st.session_state.step == 2:
-    st.header("2. Jobopslag")
-    opslag_input = st.text_area("Indsæt jobteksten her", height=300)
-    if st.button("Næste →") and opslag_input:
-        st.session_state.opslag = opslag_input
+    st.header("2. Jobopslaget")
+    col_l1, col_l2 = st.columns([3, 1])
+    job_url = col_l1.text_input("Indsæt link til jobopslag:")
+    if col_l2.button("Hent tekst 📥"):
+        if job_url:
+            st.session_state.fetched_txt = get_text_from_url(job_url)
+    
+    opslag_final = st.text_area("Jobtekst (rediger hvis nødvendigt):", 
+                                value=st.session_state.get('fetched_txt', ""), height=300)
+    
+    c_back, c_next = st.columns(2)
+    if c_back.button("← Tilbage"): st.session_state.step = 1; st.rerun()
+    if c_next.button("Næste →") and opslag_final:
+        st.session_state.opslag = opslag_final
         st.session_state.step = 3
         st.rerun()
 
+# STEP 3: STRATEGI
 elif st.session_state.step == 3:
-    st.header("3. Indstillinger")
+    st.header("3. Strategi")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone", ["Professionel & Seriøs", "Personlig & Varm", "Kreativ & Modig"])
     length = c2.select_slider("Længde", ["Kort", "Standard", "Uddybende"], value="Standard")
-    mot_pos = st.radio("Hvor skal motivationen stå?", ["I starten (fang dem med det samme)", "I slutningen (byg op til det)"])
+    mot = st.radio("Motivationens placering", ["I starten", "I slutningen"], horizontal=True)
     
     if st.button("Generér min ansøgning ✨"):
-        st.session_state.p = {"tone": tone, "length": length, "mot": mot_pos}
+        st.session_state.p = {"tone": tone, "length": length, "mot": mot}
         st.session_state.step = 4
         st.rerun()
 
+# STEP 4: RESULTAT
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver en dybdegående ansøgning..."):
+        with st.spinner("Skriver en fyldig ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-                
-                # Kraftfuld prompt for at undgå korte svar
                 prompt = f"""
-                Du er en elite-rekrutteringskonsulent. Skriv en fyldig, overbevisende og professionel ansøgning på dansk.
-                
-                KRAV TIL VOLUMEN:
-                - Hvis længden er 'Standard' eller 'Uddybende', SKAL du skrive mindst 400-600 ord.
-                - Brug mindst 4-5 tydelige afsnit med dobbelt linjeskift.
-                - Motivationen SKAL placeres: {st.session_state.p['mot']}.
-                
-                STRUKTUR:
-                - Ingen hilsner eller 'Med venlig hilsen'.
-                - Gå direkte til substansen.
-                - Brug data fra CV: {st.session_state.cv_text[:2000]}
-                - Match med Job: {st.session_state.opslag[:2000]}
-                
-                SVAR KUN I JSON FORMAT:
-                {{
-                  "overskrift": "En fængende overskrift",
-                  "ansogning": "Her skriver du den lange tekst med afsnit...",
-                  "pitch": "LinkedIn pitch",
-                  "interview": "#### ❓ Spørgsmål\\n**Svar:** ..."
-                }}
+                Skriv en DYBDEGÅENDE dansk ansøgning som JSON. 
+                VIGTIGT: Skriv mindst 500 ord hvis 'Standard' eller 'Uddybende'. Brug mindst 4-5 afsnit med dobbelt linjeskift.
+                REGLER: Ingen hilsner (Kære/Hilsen). Start direkte med substans.
+                Motivation skal stå i {st.session_state.p['mot']}. Tone: {st.session_state.p['tone']}.
+                Format: {{ "overskrift": "...", "ansogning": "...", "pitch": "...", "interview": "..." }}
+                CV: {st.session_state.cv_text[:2000]} | Job: {st.session_state.opslag[:2000]}
                 """
-                
-                response = client.chat.completions.create(
+                resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er en professionel tekstforfatter. Svar altid i JSON."},
+                    messages=[{"role": "system", "content": "Du er elite-tekstforfatter. Svar kun i JSON."},
                               {"role": "user", "content": prompt}],
                     response_format={"type": "json_object"}
                 )
-                
-                res = json.loads(response.choices[0].message.content)
+                res = json.loads(resp.choices[0].message.content)
                 res['ansogning'] = clean_ai_text(res['ansogning'])
                 st.session_state.final_res = res
                 
@@ -182,10 +174,8 @@ elif st.session_state.step == 4:
                 conn = sqlite3.connect(db_path)
                 conn.execute("INSERT INTO archive (date, company, title, ansogning, opslag) VALUES (?,?,?,?,?)",
                              (get_danish_time(), st.session_state.comp, st.session_state.titl, res['ansogning'], st.session_state.opslag))
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                st.error(f"Fejl: {e}")
+                conn.commit(); conn.close()
+            except Exception as e: st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
@@ -193,10 +183,9 @@ elif st.session_state.step == 4:
         st.write(res.get('ansogning'))
         
         if st.session_state.temp:
-            doc_file = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), 
-                                st.session_state.comp, st.session_state.titl, st.session_state.contact)
-            if doc_file:
-                st.download_button("Hent som Word (.docx) 📄", doc_file, f"Ansogning_{st.session_state.comp}.docx")
+            doc = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), 
+                            st.session_state.comp, st.session_state.titl, st.session_state.contact)
+            if doc: st.download_button("Hent Word (.docx) 📄", doc, f"Ansogning_{st.session_state.comp}.docx")
         
         st.divider()
         st.subheader("LinkedIn & Interview")
@@ -204,7 +193,19 @@ elif st.session_state.step == 4:
         st.markdown(res.get('interview'))
         
         if st.button("Start forfra 🔄"):
-            for key in ['final_res', 'cv_text', 'opslag', 'comp']:
-                if key in st.session_state: del st.session_state[key]
-            st.session_state.step = 1
-            st.rerun()
+            for k in ['final_res', 'fetched_txt', 'opslag']: 
+                if k in st.session_state: del st.session_state[k]
+            st.session_state.step = 1; st.rerun()
+
+# ARKIV
+st.divider()
+st.subheader("📂 Arkiv")
+if os.path.exists(db_path):
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC LIMIT 5", conn)
+    conn.close()
+    for i, row in df.iterrows():
+        with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+            st.write(row['ansogning'])
+            st.download_button("Hent ansøgning", row['ansogning'], f"Arkiv_A_{i}.txt", key=f"a_{i}")
+            st.download_button("Hent jobopslag", row['opslag'], f"Arkiv_J_{i}.txt", key=f"j_{i}")
