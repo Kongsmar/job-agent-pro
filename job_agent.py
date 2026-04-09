@@ -55,10 +55,7 @@ def fill_docx(template, content, headline, company, title, contact_person):
     try:
         template.seek(0)
         doc = Document(template)
-        
-        # Sikr dansk formatering af overskrift (Kun stort begyndelsesbogstav)
         formatted_headline = headline.strip().capitalize()
-        
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
@@ -66,7 +63,6 @@ def fill_docx(template, content, headline, company, title, contact_person):
             "{{OVERSKRIFT}}": formatted_headline,
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
-        
         def replace_placeholders(paragraphs):
             for p in paragraphs:
                 for key, value in data.items():
@@ -76,13 +72,11 @@ def fill_docx(template, content, headline, company, title, contact_person):
                                 run.text = run.text.replace(key, str(value))
                         if key in p.text:
                             p.text = p.text.replace(key, str(value))
-
         replace_placeholders(doc.paragraphs)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     replace_placeholders(cell.paragraphs)
-
         for p in doc.paragraphs:
             if "{{ANSOGNING}}" in p.text:
                 paragraphs_content = content.split('\n')
@@ -141,12 +135,10 @@ elif st.session_state.step == 3:
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
     headline_type = c2.selectbox("Overskriftstype:", ["Formel (Ansøgning om...)", "Værdiskabende (Resultatorienteret)", "Kreativ/Catchy", "Spørgende/Nysgerrig"])
-    
     length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
-    
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
     if col2.button("Generér Alt ✨"):
@@ -157,55 +149,62 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver din pakke..."):
+        with st.spinner("Udfører dybdegående ATS-analyse og skriver..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS Analyse
-                ats_p = f"Giv Match Score i % og 3 nøgleord.\nJob: {st.session_state.opslag[:1500]}\nCV: {st.session_state.cv_text[:1500]}"
+                # --- DEDIKERET ATS ANALYSE ---
+                ats_p = f"""Foretag en grundig ATS-analyse af CV vs Jobopslag. 
+                Svaret skal indeholde:
+                1. Match Score i % (f.eks. 85%).
+                2. De 3 vigtigste nøgleord fundet i jobopslaget.
+                3. Top 3 styrker i matchet.
+                4. Top 3 mangler/huller (hvad skal forklares/kompenseres for).
+                
+                CV: {st.session_state.cv_text[:2000]}
+                Job: {st.session_state.opslag[:2000]}"""
+                
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
+                # --- HOVED GENERERING ---
                 main_prompt = f"""
-                Lav en JSON pakke:
-                'overskrift': Lav en overskrift af typen '{p['headline_type']}'. VIGTIGT: Brug kun stort begyndelsesbogstav (ikke versaler på hvert ord).
-                'ansogning': Skriv en FYLDIG brødtekst. Brug \\n\\n til afsnit. Ingen hilsen/afsked. Motivation placeres {p['mot_pos']}.
-                'pitch': Kort LinkedIn besked.
-                'interview': Lav en punktformet liste med de 3 vigtigste spørgsmål og strategiske svar-tips. Brug bindestreger (-) til punkterne.
+                Lav en JSON pakke på dansk:
+                'overskrift': En '{p['headline_type']}' overskrift (kun stort begyndelsesbogstav).
+                'ansogning': En FYLDIG brødtekst (ca. 500 ord). Brug dobbelt linjeskift. Motivation: {p['mot_pos']}.
+                'pitch': 3-4 sætninger til LinkedIn.
+                'interview': 3 kritiske spørgsmål og strategiske svar-tips i punktform (-).
                 
-                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, NOTER: {st.session_state.noter}
+                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar KUN i JSON format. Skriv på fejlfrit dansk uden unødvendige versaler."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er en elite-rekrutteringskonsulent. Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
 
-                # GEM I ARKIV
+                # Arkivering
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
-
             except Exception as e:
                 st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
-        st.info(f"📊 **Analyse:** {st.session_state.ats_result}")
         
-        # Formatering af overskrift til visning (Dansk stil)
-        headline_final = res.get('overskrift', '').strip().capitalize()
-
+        # VISNING AF DEN UDVIDEDE ANALYSE
+        with st.expander("📊 Se udvidet ATS & Match Analyse", expanded=True):
+            st.markdown(st.session_state.ats_result)
+        
         c_m, c_s = st.columns([2, 1])
         with c_m:
-            st.markdown(f"### 🚩 {headline_final}")
-            st.divider()
-            st.subheader("📝 Ansøgning")
+            headline_final = res.get('overskrift', '').strip().capitalize()
+            st.markdown(f"### {headline_final}")
             st.write(res.get('ansogning', ''))
-            
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
