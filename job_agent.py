@@ -10,11 +10,10 @@ from datetime import datetime, timedelta
 from docx import Document
 from PyPDF2 import PdfReader
 import json
-import feedparser
 import urllib.parse
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - Jobnet Edition", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
@@ -34,6 +33,7 @@ init_db()
 
 # --- HJÆLPEFUNKTIONER ---
 def get_text_from_url(url):
+    """Henter og renser tekst fra et vilkårligt link."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
@@ -42,40 +42,38 @@ def get_text_from_url(url):
         return soup.get_text(separator=' ', strip=True)
     except: return ""
 
-def search_jobindex(query, location):
-    """Hybrid søgning der prøver RSS først, derefter scraping."""
+def search_jobnet(query, location):
+    """Søger direkte i Jobnets API/Søgeside."""
     try:
         encoded_q = urllib.parse.quote(query)
         encoded_l = urllib.parse.quote(location)
-        rss_url = f"https://www.jobindex.dk/jobsoegning?q={encoded_q}&l={encoded_l}&format=rss"
+        # Vi bruger Jobnets søge-URL, som er stabil
+        url = f"https://job.jobnet.dk/CV/FindWork?SearchString={encoded_q}&LocationString={encoded_l}"
         
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-        
-        # Forsøg 1: RSS
-        response = requests.get(rss_url, headers=headers, timeout=10)
-        feed = feedparser.parse(response.content)
-        
-        if feed.entries:
-            return feed.entries
-        
-        # Forsøg 2: HTML Scraping (hvis RSS er tom/blokeret)
-        search_url = f"https://www.jobindex.dk/jobsoegning?q={encoded_q}&l={encoded_l}"
-        response = requests.get(search_url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Find jobannoncer i deres HTML struktur
-        jobs = []
-        for job in soup.find_all('div', class_='PaidJob'):
-            title_link = job.find('a', href=True)
-            if title_link:
-                class Entry: pass
-                e = Entry()
-                e.title = title_link.get_text(strip=True)
-                e.link = title_link['href']
-                jobs.append(e)
-        return jobs
+        # Jobnet lister ofte job i specifikke sektioner. Her trækker vi links ud.
+        results = []
+        # Vi leder efter links der indeholder job-ID'er (typisk i Jobnet format)
+        for a in soup.find_all('a', href=True):
+            if "/CV/FindWork/Details/" in a['href']:
+                title = a.get_text(strip=True)
+                if title and len(title) > 5:
+                    full_link = "https://job.jobnet.dk" + a['href'] if a['href'].startswith('/') else a['href']
+                    results.append({'title': title, 'link': full_link})
+        
+        # Fjern dubletter
+        seen = set()
+        unique_results = []
+        for r in results:
+            if r['link'] not in seen:
+                unique_results.append(r)
+                seen.add(r['link'])
+        
+        return unique_results[:10]
     except Exception as e:
-        st.error(f"Søgefejl: {e}")
         return []
 
 def extract_pdf(file):
@@ -109,16 +107,8 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         new_p = doc.add_paragraph(text.strip())
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for p in cell.paragraphs:
-                        for key, value in data.items():
-                            if key in p.text:
-                                p.text = p.text.replace(key, str(value))
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
+        
+        buf = io.BytesIO(); doc.save(buf); buf.seek(0)
         return buf
     except: return None
 
@@ -128,8 +118,7 @@ def next_step(): st.session_state.step += 1
 def prev_step(): st.session_state.step -= 1
 def reset(): 
     for key in list(st.session_state.keys()):
-        if key not in ['cv_text', 'temp']: # Bevar filer
-            del st.session_state[key]
+        if key not in ['cv_text', 'temp']: del st.session_state[key]
     st.session_state.step = 1
 
 # --- APP FLOW ---
@@ -139,25 +128,26 @@ st.progress(st.session_state.step / 4)
 if st.session_state.step == 1:
     st.header("1. Find Job & Grundlag")
     
-    with st.expander("🔍 Valgfrit: Søg efter jobopslag på Jobindex", expanded=False):
+    with st.expander("🔍 Søg efter aktive job på Jobnet", expanded=False):
         c_s1, c_s2 = st.columns(2)
-        search_q = c_s1.text_input("Jobtitel (f.eks. Projektleder):")
-        search_l = c_s2.text_input("Område (f.eks. Aarhus):")
+        search_q = c_s1.text_input("Jobtitel:")
+        search_l = c_s2.text_input("Område (By eller Postnr):")
         
         if st.button("Søg nu"):
-            with st.spinner("Henter data fra Jobindex..."):
-                results = search_jobindex(search_q, search_l)
-                if results:
-                    for entry in results[:10]:
+            with st.spinner("Henter data fra Jobnet..."):
+                res = search_jobnet(search_q, search_l)
+                if res:
+                    for entry in res:
                         col_t, col_b = st.columns([4, 1])
-                        col_t.markdown(f"**{entry.title}**")
-                        if col_b.button("Brug dette 📥", key=entry.link):
-                            st.session_state.fetched_txt = get_text_from_url(entry.link)
-                            st.session_state.comp = entry.title.split(" hos ")[-1] if " hos " in entry.title else ""
-                            st.session_state.titl = entry.title.split(" hos ")[0]
-                            st.success(f"Valgt: {st.session_state.titl}")
+                        col_t.markdown(f"**{entry['title']}**")
+                        if col_b.button("Brug 📥", key=entry['link']):
+                            st.session_state.fetched_txt = get_text_from_url(entry['link'])
+                            st.session_state.comp = "Se opslag" # Jobnet lister ikke altid firma direkte i titlen
+                            st.session_state.titl = entry['title']
+                            st.success("Job valgt!")
                 else:
-                    st.warning("Ingen resultater fundet. Prøv bredere søgeord.")
+                    st.info("Ingen direkte resultater fundet. Brug Google-linket herunder eller indsæt link manuelt.")
+                    st.markdown(f"[Søg efter '{search_q}' på Google Jobs](https://www.google.com/search?q=jobnet+{search_q}+{search_l})")
 
     st.divider()
     
@@ -180,15 +170,13 @@ if st.session_state.step == 1:
 
 elif st.session_state.step == 2:
     st.header("2. Jobopslaget")
-    
     col_u1, col_u2 = st.columns([3, 1])
-    manual_url = col_u1.text_input("Indsæt link til job (hvis du har et):")
-    if col_u2.button("Hent fra link"):
-        if manual_url:
-            st.session_state.fetched_txt = get_text_from_url(manual_url)
+    manual_url = col_u1.text_input("Indsæt link (Jobnet, LinkedIn, etc.):")
+    if col_u2.button("Hent tekst"):
+        if manual_url: st.session_state.fetched_txt = get_text_from_url(manual_url)
     
     opslag = st.text_area("Jobopslagets tekst:", value=st.session_state.get('fetched_txt', ""), height=350)
-    noter = st.text_area("Særlige noter til AI (valgfrit):")
+    noter = st.text_area("Egne noter:")
     
     c_back, c_next = st.columns(2)
     if c_back.button("← Tilbage"): prev_step(); st.rerun()
@@ -210,69 +198,55 @@ elif st.session_state.step == 3:
     
     if st.button("Generér Alt ✨"):
         st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos, "headline_type": headline_type}
-        next_step()
-        st.rerun()
+        next_step(); st.rerun()
 
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver din personlige pakke..."):
+        with st.spinner("Skriver..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
-                
-                ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
+                ats_p = f"Analysér CV mod Jobopslag. CV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Dobbelt linjeskift. Ingen hilsner/afsked. Start direkte.
-                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle din vinkel i teksten. Kun stort begyndelsesbogstav.
+                1. 'ansogning': Lang brødtekst (min. 5 afsnit). Dobbelt linjeskift. Ingen hilsner.
+                2. 'overskrift': En '{p['headline_type']}' overskrift. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': Top 3 mest kritiske spørgsmål og svarforslag. 
-                   Formatér som ren Markdown: #### [Spørgsmål]\n**Svarforslag:** [Svar]
-                
-                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}, NOTER: {st.session_state.noter}
+                4. 'interview': Top 3 spørgsmål/svar i Markdown (#### [Q]\n**Svar:** [A]).
+                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
-                
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON format. Ingen koder i teksten."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
-
+                
+                # Arkivér
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
-            except Exception as e:
-                st.error(f"Fejl: {e}")
+            except Exception as e: st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
-        with st.expander("📊 ATS & Match Analyse", expanded=True):
-            st.markdown(st.session_state.ats_result)
-        
+        headline_final = res.get('overskrift', '').strip().capitalize()
+        st.markdown(f"### {headline_final}")
+        st.divider()
         c_m, c_s = st.columns([2, 1])
         with c_m:
-            headline_final = res.get('overskrift', '').strip().capitalize()
-            st.markdown(f"### {headline_final}")
-            st.divider()
-            st.subheader("📝 Ansøgning")
             st.write(res.get('ansogning', ''))
-            
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
-        
         with c_s:
-            st.subheader("✉️ LinkedIn Pitch")
             st.success(res.get('pitch', ''))
-            st.subheader("🎤 Interview Prep")
             st.markdown(res.get('interview', ''))
-        
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
 # --- ARKIV ---
@@ -280,9 +254,6 @@ st.divider()
 st.subheader("📂 Arkiv")
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
-    for index, row in df.head(15).iterrows():
+    for index, row in df.head(10).iterrows():
         with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-            ca, cb = st.columns(2)
-            with ca: st.download_button("Hent Ansøgning", row['ansogning'], f"Ans_{row['company']}.txt", key=f"arch_a_{index}")
-            with cb: st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"arch_o_{index}")
             st.write(row['ansogning'])
