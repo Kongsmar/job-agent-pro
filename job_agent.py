@@ -105,7 +105,7 @@ elif st.session_state.step == 2:
         txt = get_text_from_url(url)
         if txt: st.session_state.fetched_txt = txt
     opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=250)
-    noter = st.text_area("Noter:")
+    noter = st.text_area("Hvad skal AI'en vide? (Noter):")
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
     if col2.button("Næste →", disabled=not opslag):
@@ -118,53 +118,53 @@ elif st.session_state.step == 3:
     st.header("3. Strategi")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Toneleje:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
-    length = c2.select_slider("Længde:", ["Kort", "Standard", "Uddybende"], "Standard")
+    length = st.select_slider("Ønsket omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mirror = st.toggle("Spejl sprogbrug", True)
     motivation = st.radio("Motivationens placering:", ["I starten", "I bunden"])
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
-    if col2.button("Generér Alt ✨"):
+    if col2.button("Generér Komplet Pakke ✨"):
         st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mirror": mirror, "mot": motivation}
         next_step()
         st.rerun()
 
 elif st.session_state.step == 4:
-    st.header("4. Resultat")
+    st.header("4. Dit Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skaber magien..."):
+        with st.spinner("Skriver en gennemarbejdet ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # Samlet system-prompt for at sikre alle 3 dele genereres
-                sys_msg = "Du er en karriererådgiver. Svar i JSON-format med nøglerne: 'ansogning', 'pitch', 'interview'."
+                # Instruktioner der sikrer længde og dybde
+                length_instruction = "Skriv ca. 450-600 ord fordelt på 4-5 afsnit." if p['len'] == "Standard" else "Skriv ca. 250-350 ord." if p['len'] == "Kort" else "Skriv ca. 700-800 ord med stor detaljegrad."
                 
                 prompt = f"""
-                Lav en komplet pakke til jobbet som {st.session_state.titl}.
+                Du er en elite-rekrutteringskonsulent. Skriv en overbevisende og substantiel ansøgning til jobbet som {st.session_state.titl}.
                 
-                1. ANSØGNING (Nøgle: 'ansogning'):
-                Skriv KUN de midterste afsnit (brødteksten). 
-                - Start direkte med første afsnit.
-                - INGEN hilsen (Kære/Hej), INGEN 'Att:', INGEN afslutning (Med venlig hilsen/navn). 
-                - Tone: {p['tone']}, Fokus: {p['fokus']}, Indledning: {p['strat']}.
+                ANSØGNING (Nøgle: 'ansogning'):
+                - OMFANG: {length_instruction}
+                - STRUKTUR: Skriv KUN brødteksten. Start direkte med første afsnit. Ingen 'Kære...', ingen 'Med venlig hilsen'.
+                - INDHOLD: Du SKAL uddybe specifikke erfaringer fra CV'et og koble dem direkte til kravene i jobopslaget. Gør det konkret.
+                - STRATEGI: {p['strat']}. Fokusér på {p['fokus']}. Placér motivationen {p['mot']}.
                 
-                2. LINKEDIN PITCH (Nøgle: 'pitch'):
-                Skriv en kort, fængende besked på 3-4 sætninger til en rekrutteringsansvarlig.
+                PITCH (Nøgle: 'pitch'):
+                En stærk LinkedIn-besked.
                 
-                3. INTERVIEW PREP (Nøgle: 'interview'):
-                Find de 3 mest kritiske spørgsmål baseret på jobopslag vs. CV.
+                INTERVIEW (Nøgle: 'interview'):
+                De 3 sværeste spørgsmål rekrutteringschefen vil stille baseret på CV/Opslag.
                 
                 DATA:
-                CV: {st.session_state.cv_text[:3000]}
-                Job: {st.session_state.opslag[:3000]}
-                Noter: {st.session_state.noter}
+                CV: {st.session_state.cv_text[:4000]}
+                JOB: {st.session_state.opslag[:4000]}
+                NOTER: {st.session_state.noter}
                 """
                 
                 resp = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": prompt}],
+                    model="gpt-4o", # Bruger gpt-4o for højere kvalitet i tekst
+                    messages=[{"role": "system", "content": "Svar i JSON: {'ansogning': '...', 'pitch': '...', 'interview': '...'}"}, {"role": "user", "content": prompt}],
                     response_format={"type": "json_object"}
                 )
                 
@@ -183,17 +183,17 @@ elif st.session_state.step == 4:
         res = st.session_state.final_res
         c_main, c_side = st.columns([2, 1])
         with c_main:
-            st.subheader("📝 Brødtekst til Word")
-            st.write(res.get('ansogning', 'Kunne ikke generere ansøgning'))
+            st.subheader("📝 Genereret Brødtekst")
+            st.write(res.get('ansogning'))
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                if doc: st.download_button("Hent Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+                st.download_button("Hent færdig Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_side:
             st.subheader("✉️ LinkedIn Pitch")
-            st.success(res.get('pitch', 'Ingen pitch genereret'))
-            st.subheader("🎤 Interview Prep")
-            st.warning(res.get('interview', 'Ingen spørgsmål genereret'))
+            st.info(res.get('pitch'))
+            st.subheader("🎤 Interview Forberedelse")
+            st.warning(res.get('interview'))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
