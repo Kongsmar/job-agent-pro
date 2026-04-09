@@ -6,7 +6,7 @@ import sqlite3
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 from docx import Document
 from PyPDF2 import PdfReader
 import json
@@ -14,6 +14,12 @@ import json
 # --- KONFIGURATION & DATABASE ---
 st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
+
+def get_danish_time():
+    # Finder dansk tid (UTC+1 eller UTC+2 ved sommertid)
+    # Da Streamlit Cloud ofte kører på UTC, lægger vi 1-2 timer til manuelt eller bruger datetime
+    # En enkel og robust metode til dansk tid:
+    return (datetime.utcnow() + timedelta(hours=2)).strftime("%d. %m. %Y, %H:%M")
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -159,18 +165,13 @@ elif st.session_state.step == 4:
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # HOVED GENERERING - MED STRAMME RESTRIKTIONER
+                # HOVED GENERERING
                 main_prompt = f"""
                 Du er en elite-rekrutteringskonsulent. Lav en JSON pakke på dansk.
-                
-                STRENG REGL OM FORM:
-                1. 'ansogning': Skriv KUN selve brødteksten. Start direkte med indledningen. 
-                   DU MÅ IKKE skrive "Kære...", "Kære [Navn]", "Ansøgning til...", "Venlig hilsen" eller navne til sidst. 
-                   Hvis du skriver hilsner, fejler systemet. Længde: ca. 500 ord.
-                2. 'overskrift': Skal være en '{p['headline_type']}'. Den skal afspejle indholdet i ansøgningen og ansøgerens unikke vinkel, ikke bare kopiere jobtitlen. Kun stort begyndelsesbogstav.
+                1. 'ansogning': Skriv KUN selve brødteksten. Ingen hilsner eller navne. ca. 500 ord.
+                2. 'overskrift': En '{p['headline_type']}' overskrift baseret på ansøgningens vinkel. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
                 4. 'interview': 3 spørgsmål og svar-tips i punktform (-).
-                
                 STRATEGI: Tone: {p['tone']}, Fokus: {p['fokus']}, Motivation: {p['mot_pos']}.
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
@@ -182,17 +183,16 @@ elif st.session_state.step == 4:
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
 
-                # Arkivering
+                # Arkivering med Dansk Tid
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
-                          (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
+                          (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
             except Exception as e:
                 st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
-        
         with st.expander("📊 Se udvidet ATS & Match Analyse", expanded=True):
             st.markdown(st.session_state.ats_result)
         
@@ -216,11 +216,23 @@ elif st.session_state.step == 4:
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
-# --- ARKIV ---
+# --- ARKIV SEKTION ---
 st.divider()
 st.subheader("📂 Arkiv")
 if os.path.exists(db_path):
-    conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
-    for _, row in df.head(10).iterrows():
-        with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-            st.write(row['ansogning'])
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
+    conn.close()
+    
+    if not df.empty:
+        for index, row in df.head(15).iterrows():
+            with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.download_button(label="Hent ansøgning (.txt)", data=row['ansogning'], file_name=f"Ansogning_{row['company']}.txt", key=f"dl_ans_{index}")
+                with col_b:
+                    st.download_button(label="Hent jobopslag (.txt)", data=row['opslag'], file_name=f"Opslag_{row['company']}.txt", key=f"dl_ops_{index}")
+                st.divider()
+                st.write(row['ansogning'])
+    else:
+        st.info("Arkivet er tomt.")
