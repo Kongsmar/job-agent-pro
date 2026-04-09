@@ -14,7 +14,7 @@ import urllib.parse
 import re
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - Final Master", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
@@ -33,16 +33,20 @@ def init_db():
 init_db()
 
 # --- HJÆLPEFUNKTIONER ---
-def clean_greetings(text):
-    """Fjerner hilsner hvis AI'en glemmer instruksen."""
+def clean_text_final(text):
+    """Fjerner hilsner, 'til' og flettekoder manuelt som sikkerhedsnet."""
     lines = text.split('\n')
-    bad_words = ['kære', 'med venlig hilsen', 'venlig hilsen', 'mvh', 'hilsen', 'til ']
-    cleaned_lines = [l for l in lines if not any(l.lower().startswith(bw) for bw in bad_words)]
-    return '\n'.join(cleaned_lines).strip()
+    bad_starts = ['kære', 'med venlig hilsen', 'venlig hilsen', 'mvh', 'hilsen', 'til ', 'emne:', 'vedrør:']
+    # Fjern linjer der starter med forbudte ord
+    cleaned = [l for l in lines if not any(l.lower().strip().startswith(bw) for bw in bad_starts)]
+    res = '\n'.join(cleaned).strip()
+    # Fjern eventuelle flettekoder hvis AI'en har hallucineret dem ind
+    res = re.sub(r'\{\{.*?\}\}', '', res)
+    return res
 
 def get_text_from_url(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         for script in soup(["script", "style"]): script.extract()
@@ -83,7 +87,7 @@ def next_step(): st.session_state.step += 1
 def prev_step(): st.session_state.step -= 1
 def reset(): 
     for key in list(st.session_state.keys()):
-        if key not in ['cv_text', 'temp']: del st.session_state[key]
+        if key not in ['cv_text', 'temp', 'final_res', 'ats_result']: del st.session_state[key]
     st.session_state.step = 1
 
 # --- APP FLOW ---
@@ -130,11 +134,13 @@ elif st.session_state.step == 2:
         next_step(); st.rerun()
 
 elif st.session_state.step == 3:
-    st.header("3. Strategi")
+    st.header("3. Strategi & Længde")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
     head_t = c2.selectbox("Overskriftstype:", ["Formel", "Værdiskabende", "Catchy", "Spørgende"])
-    length = st.select_slider("Længde:", ["Kort", "Standard", "Uddybende"], value="Standard")
+    
+    length = st.select_slider("Ønsket længde:", ["Kort", "Standard", "Uddybende"], value="Standard")
+    
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"], horizontal=True)
     
@@ -158,22 +164,27 @@ elif st.session_state.step == 4:
                 # HOVEDGENERERING
                 main_prompt = f"""
                 Lav en JSON pakke på dansk. 
-                STRENG REGL: Ingen 'Kære...', 'Med venlig hilsen' eller 'Til...'. Ingen flettekoder.
-                1. 'ansogning': Skriv ansøgningen ({p['length']}). Start direkte med motivationen ({p['mot_pos']}). Dobbelt linjeskift.
+                STRENG REGL: Ingen hilsner (Kære, Venlig hilsen osv). Ingen flettekoder. Start direkte.
+                
+                1. 'ansogning': Skriv selve ansøgningen. Længde skal være {p['length']}. 
+                   Tone: {p['tone']}. Placér motivationen {p['mot_pos']}. Brug dobbelt linjeskift.
                 2. 'overskrift': En '{p['head_t']}' overskrift.
-                3. 'pitch': LinkedIn pitch (3-4 sætninger).
-                4. 'interview': Top 3 spørgsmål/svar. Format: #### ❓ [Spørgsmål]\n**Svarforslag:** [Svar]
+                3. 'pitch': LinkedIn pitch (3-4 skarpe sætninger).
+                4. 'interview': 3 interviewspørgsmål og svar. 
+                   Format: #### ❓ [Spørgsmål]\n**Svarforslag:** [Svar]
+                
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, NOTER: {st.session_state.noter}
                 """
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er karriereekspert. Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 raw_json = json.loads(resp.choices[0].message.content)
-                raw_json['ansogning'] = clean_greetings(raw_json['ansogning'])
+                raw_json['ansogning'] = clean_text_final(raw_json['ansogning'])
                 st.session_state.final_res = raw_json
                 
+                # Arkiv
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
@@ -193,13 +204,15 @@ elif st.session_state.step == 4:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline, st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word-fil 📄", doc, f"Ansogning_{st.session_state.comp}.docx")
         with c_s:
+            st.subheader("✉️ LinkedIn Pitch")
             st.info(res.get('pitch', ''))
+            st.subheader("🎤 Interview Prep")
             st.markdown(res.get('interview', ''))
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
-# --- ARKIV (MED DOWNLOAD-FIX) ---
+# --- ARKIV ---
 st.divider()
-st.subheader("📂 Arkiv")
+st.subheader("📂 Tidligere ansøgninger")
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
     for index, row in df.head(10).iterrows():
