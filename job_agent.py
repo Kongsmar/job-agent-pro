@@ -62,7 +62,7 @@ def fill_docx(template, content, company, title, contact_person):
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
         
-        # Håndtering af placeholders (undtagen selve ansøgningen)
+        # 1. Erstat almindelige tags
         def replace_placeholders(paragraphs):
             for p in paragraphs:
                 for key, value in data.items():
@@ -79,19 +79,17 @@ def fill_docx(template, content, company, title, contact_person):
                 for cell in row.cells:
                     replace_placeholders(cell.paragraphs)
 
-        # Speciel håndtering af {{ANSOGNING}} for at bevare afsnit
+        # 2. Indsæt Ansøgning med korrekt afsnitsopdeling
         for p in doc.paragraphs:
             if "{{ANSOGNING}}" in p.text:
-                # Split indholdet ved linjeskift
                 paragraphs_content = content.split('\n')
-                p.text = p.text.replace("{{ANSOGNING}}", "") # Rens tagget
-                parent = p._element.getparent()
-                
+                p.text = p.text.replace("{{ANSOGNING}}", "")
+                cursor = p
                 for text in paragraphs_content:
-                    if text.strip(): # Tilføj kun hvis der er tekst
+                    if text.strip():
                         new_p = doc.add_paragraph(text.strip())
-                        p._element.addnext(new_p._element)
-                        p = new_p # Flyt markøren så rækkefølgen passer
+                        cursor._element.addnext(new_p._element)
+                        cursor = new_p
 
         buf = io.BytesIO()
         doc.save(buf)
@@ -102,9 +100,10 @@ def fill_docx(template, content, company, title, contact_person):
         return None
 
 # --- APP FLOW ---
-st.title("💼 Job Agent Pro")
+st.title("💼 Job Agent Pro - Master Edition")
 st.progress(st.session_state.step / 4)
 
+# --- TRIN 1 ---
 if st.session_state.step == 1:
     st.header("1. Grundlaget")
     cv = st.file_uploader("Upload dit CV (PDF)", type="pdf")
@@ -112,7 +111,7 @@ if st.session_state.step == 1:
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhedens navn:")
     titl = c2.text_input("Hvilken stilling søger du?")
-    contact = st.text_input("Kontaktperson:")
+    contact = st.text_input("Kontaktperson (f.eks. Mette Jensen):")
     if st.button("Næste →", disabled=not (cv and comp and titl)):
         st.session_state.cv_text = extract_pdf(cv)
         st.session_state.temp = temp
@@ -122,14 +121,15 @@ if st.session_state.step == 1:
         next_step()
         st.rerun()
 
+# --- TRIN 2 ---
 elif st.session_state.step == 2:
     st.header("2. Jobbet")
     url = st.text_input("Link til jobopslag:")
-    if st.button("Hent tekst") and url:
+    if st.button("Hent tekst fra link") and url:
         txt = get_text_from_url(url)
         if txt: st.session_state.fetched_txt = txt
     opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=250)
-    noter = st.text_area("Noter:")
+    noter = st.text_area("Dine noter til AI'en:")
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
     if col2.button("Næste →", disabled=not opslag):
@@ -138,6 +138,7 @@ elif st.session_state.step == 2:
         next_step()
         st.rerun()
 
+# --- TRIN 3 ---
 elif st.session_state.step == 3:
     st.header("3. Strategi")
     c1, c2 = st.columns(2)
@@ -148,39 +149,36 @@ elif st.session_state.step == 3:
     mot_pos = st.radio("Placering af motivation:", ["I starten (krogen)", "I bunden (opsamlingen)"])
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
-    if col2.button("Generér ✨"):
+    if col2.button("Generér Alt ✨"):
         st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos}
         next_step()
         st.rerun()
 
+# --- TRIN 4 ---
 elif st.session_state.step == 4:
     st.header("4. Analyse & Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver..."):
+        with st.spinner("Udfører ATS-analyse og skriver din pakke..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS PROMPT
-                ats_p = f"Giv en Match Score i % og 3 nøgleord.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
+                # ATS ANALYSE
+                ats_p = f"Analysér jobopslag mod CV. Giv Match Score i % og 3 nøgleord.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # HOVED PROMPT
+                # HOVEDGENERERING
                 main_prompt = f"""
-                Skriv en pakke i JSON. 
-                VIGTIGT: Brug dobbelt linjeskift (\\n\\n) mellem afsnit i 'ansogning'.
-                
-                'ansogning': Skriv KUN brødtekst (4-5 afsnit). Ingen hilsen/afsked. Motivation skal være {p['mot_pos']}.
-                'pitch': LinkedIn besked.
-                'interview': 3 spørgsmål.
-                
+                Lav en pakke i JSON. Brug dobbelt linjeskift (\\n\\n) mellem afsnit i 'ansogning'.
+                'ansogning': Skriv fyldig brødtekst. Ingen hilsen/afsked. Motivation placeres {p['mot_pos']}.
+                'pitch': 3-4 sætninger til LinkedIn.
+                'interview': 3 spørgsmål med korte svar-tips.
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
-                
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar i JSON format. Brug \\n\\n for nye afsnit."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Svar kun i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -188,13 +186,29 @@ elif st.session_state.step == 4:
                 st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
-        st.info(st.session_state.ats_result)
+        st.info(f"📊 **ATS Analyse:** {st.session_state.ats_result}")
         res = st.session_state.final_res
-        st.subheader("📝 Ansøgning")
-        st.write(res.get('ansogning').replace('\n', '\n\n')) # Sikrer visning i Streamlit
         
-        if st.session_state.temp:
-            doc = fill_docx(st.session_state.temp, res.get('ansogning'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
-            st.download_button("Hent Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+        col_m, col_s = st.columns([2, 1])
+        with col_m:
+            st.subheader("📝 Ansøgning")
+            st.write(res.get('ansogning'))
+            if st.session_state.temp:
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                st.download_button("Hent Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+        
+        with col_s:
+            st.subheader("✉️ LinkedIn & Interview")
+            st.success("**LinkedIn Pitch:**\n\n" + res.get('pitch'))
+            st.warning("**Interview Prep:**\n\n" + res.get('interview'))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
+
+# --- ARKIV ---
+st.divider()
+with st.expander("📂 Arkiv"):
+    if os.path.exists(db_path):
+        conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
+        for _, r in df.iterrows():
+            with st.expander(f"📌 {r['company']} - {r['title']} ({r['date']})"):
+                st.write(r['ansogning'])
