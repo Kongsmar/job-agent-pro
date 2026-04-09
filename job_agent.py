@@ -14,7 +14,7 @@ import urllib.parse
 import re
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - Full Memory", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - Power Edition", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
@@ -23,7 +23,6 @@ def get_danish_time():
 def init_db():
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
-    # Vi sikrer os at 'opslag' kolonnen findes til at gemme jobteksten
     c.execute('''CREATE TABLE IF NOT EXISTS archive
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   date TEXT, company TEXT, title TEXT, 
@@ -35,7 +34,7 @@ init_db()
 
 # --- HJÆLPEFUNKTIONER ---
 def clean_text_final(text):
-    """Fjerner hilsner og flettekoder."""
+    """Fjerner hilsner og flettekoder manuelt."""
     lines = text.split('\n')
     bad_starts = ['kære', 'med venlig hilsen', 'venlig hilsen', 'mvh', 'hilsen', 'til ', 'emne:', 'vedrør:']
     cleaned = [l for l in lines if not any(l.lower().strip().startswith(bw) for bw in bad_starts)]
@@ -97,20 +96,20 @@ if st.session_state.step == 1:
     st.header("1. Grundlag")
     with st.expander("🔍 Google Job-Søgning", expanded=True):
         c_s1, c_s2 = st.columns(2)
-        s_title = c_s1.text_input("Hvilken stilling?", placeholder="f.eks. Kundeservice")
-        s_loc = c_s2.text_input("By/Område?", placeholder="f.eks. Odense")
+        s_title = c_s1.text_input("Hvilken stilling?", placeholder="f.eks. Projektleder")
+        s_loc = c_s2.text_input("Hvor?", placeholder="f.eks. Aarhus")
         if s_title:
             query = f'"{s_title}" {s_loc} site:jobindex.dk OR site:job.jobnet.dk OR site:linkedin.com/jobs'
             google_url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-            st.markdown(f"### [Find {s_title} job på Google ↗️]({google_url})")
+            st.markdown(f"### [Klik for at søge på Google ↗️]({google_url})")
 
     st.divider()
-    cv = st.file_uploader("Upload CV (PDF)", type="pdf")
+    cv = st.file_uploader("Upload dit CV (PDF)", type="pdf")
     temp = st.file_uploader("Upload Word-skabelon (.docx)", type="docx")
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhed:", value=st.session_state.get('comp', ""))
     titl = c2.text_input("Stilling:", value=st.session_state.get('titl', ""))
-    contact = st.text_input("Kontaktperson:")
+    contact = st.text_input("Kontaktperson (valgfrit):")
     
     if st.button("Næste →", disabled=not (cv and comp and titl)):
         st.session_state.cv_text = extract_pdf(cv); st.session_state.temp = temp
@@ -124,8 +123,8 @@ elif st.session_state.step == 2:
     if col_u2.button("Hent tekst 📥"):
         if manual_url: st.session_state.fetched_txt = get_text_from_url(manual_url)
     
-    opslag = st.text_area("Jobtekst (kopieret eller hentet):", value=st.session_state.get('fetched_txt', ""), height=300)
-    noter = st.text_area("Noter:")
+    opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=300)
+    noter = st.text_area("Særlige noter til denne ansøgning:")
     c_b, c_n = st.columns(2)
     if c_b.button("← Tilbage"): prev_step(); st.rerun()
     if c_n.button("Næste →", disabled=not opslag):
@@ -137,9 +136,12 @@ elif st.session_state.step == 3:
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
     head_t = c2.selectbox("Overskriftstype:", ["Formel", "Værdiskabende", "Catchy", "Spørgende"])
-    length = st.select_slider("Længde på ansøgning:", ["Kort", "Standard", "Uddybende"], value="Standard")
+    
+    # Længde-instruktion
+    length = st.select_slider("Hvor lang skal ansøgningen være?", ["Kort", "Standard", "Uddybende"], value="Standard")
+    
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
-    mot_pos = st.radio("Motivation:", ["I starten (krogen)", "I bunden (opsamlingen)"], horizontal=True)
+    mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"], horizontal=True)
     
     if st.button("Generér Alt ✨"):
         st.session_state.p = {"tone": tone, "fokus": fokus, "head_t": head_t, "length": length, "mot_pos": mot_pos}
@@ -148,40 +150,57 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver..."):
+        with st.spinner("Skriver en fuld, professionel ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS ANALYSE
+                # 1. ATS ANALYSE
                 ats_p = f"Analysér dette CV mod Jobopslaget. Giv Match Score i % og punktform.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # HOVEDGENERERING
+                # 2. HOVEDGENERERING (FORBEDRET PROMPT FOR LÆNGDE OG FYLDE)
                 main_prompt = f"""
-                Lav en JSON pakke på dansk. 
-                STRENG REGL: Ingen hilsner (Kære, Venlig hilsen osv). Start direkte.
-                1. 'ansogning': Ansøgning ({p['length']}). Tone: {p['tone']}. Motivation: {p['mot_pos']}.
-                2. 'overskrift': En '{p['head_t']}' overskrift.
-                3. 'pitch': LinkedIn pitch (3-4 sætninger).
-                4. 'interview': 3 spørgsmål/svar. Format: #### ❓ [Spørgsmål]\n**Svarforslag:** [Svar]
+                Du er en ekspert i rekruttering. Skriv en KOMPLET og DYBDEGÅENDE ansøgning på dansk.
+                
+                REGLER:
+                - Ingen hilsner (Kære, Venlig hilsen osv).
+                - Ingen flettekoder.
+                - Start direkte med motivationen jf. indstillingen nedenfor.
+                - Brug mindst 300 ord hvis 'Standard' og 500 ord hvis 'Uddybende'.
+                
+                STRUKTUR:
+                1. 'ansogning': Skriv selve brødteksten. 
+                   Længde: {p['length']} (gør den fyldig og detaljeret). 
+                   Tone: {p['tone']}. Fokus: {p['fokus']}.
+                   Motivationens placering: {p['mot_pos']}.
+                   Sørg for at koble specifikke erfaringer fra CV'et direkte til behovene i Jobopslaget.
+                2. 'overskrift': En stærk '{p['head_t']}' overskrift.
+                3. 'pitch': LinkedIn pitch (3-4 skarpe sætninger).
+                4. 'interview': 3 kritiske spørgsmål og svarforslag. 
+                   Formatér som: #### ❓ [Spørgsmål]\n**Svarforslag:** [Svar]
                 """
+                
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar kun JSON."}, {"role": "user", "content": main_prompt + f"\nDATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}"}],
+                    messages=[
+                        {"role": "system", "content": "Du skriver ansøgninger der får folk til samtale. Svar altid i JSON."},
+                        {"role": "user", "content": main_prompt + f"\nCV: {st.session_state.cv_text}\nJOB: {st.session_state.opslag}\nNOTER: {st.session_state.noter}"}
+                    ],
                     response_format={"type": "json_object"}
                 )
+                
                 raw_json = json.loads(resp.choices[0].message.content)
                 raw_json['ansogning'] = clean_text_final(raw_json['ansogning'])
                 st.session_state.final_res = raw_json
                 
-                # GEM ALT I ARKIV (Inklusiv det originale opslag)
+                # Arkivér
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
-            except Exception as e: st.error(f"Fejl: {e}")
+            except Exception as e: st.error(f"Fejl under generering: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
@@ -194,7 +213,7 @@ elif st.session_state.step == 4:
             st.write(res.get('ansogning', ''))
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline, st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                st.download_button("Hent Word-fil 📄", doc, f"Ansogning_{st.session_state.comp}.docx")
+                st.download_button("Hent Word-fil (.docx) 📄", doc, f"Ansogning_{st.session_state.comp}.docx")
         with c_s:
             st.subheader("✉️ LinkedIn Pitch")
             st.info(res.get('pitch', ''))
@@ -202,17 +221,17 @@ elif st.session_state.step == 4:
             st.markdown(res.get('interview', ''))
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
-# --- ARKIV (MED OPSLAG-HUKOMMELSE) ---
+# --- ARKIV ---
 st.divider()
-st.subheader("📂 Dine tidligere ansøgninger & opslag")
+st.subheader("📂 Tidligere jobs & ansøgninger")
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
     for index, row in df.head(10).iterrows():
         with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-            tab1, tab2 = st.tabs(["Min Ansøgning", "Det originale Jobopslag"])
-            with tab1:
+            t1, t2 = st.tabs(["Ansøgning", "Originalt Opslag"])
+            with t1:
                 st.write(row['ansogning'])
-                st.download_button("Hent Ansøgning (.txt)", row['ansogning'], f"Ansogning_{row['company']}.txt", key=f"ans_{index}")
-            with tab2:
+                st.download_button("Hent som tekst", row['ansogning'], f"Ansogning_{row['company']}.txt", key=f"a_{index}")
+            with t2:
                 st.write(row['opslag'])
-                st.download_button("Hent Jobopslag (.txt)", row['opslag'], f"Jobopslag_{row['company']}.txt", key=f"job_{index}")
+                st.download_button("Hent som tekst", row['opslag'], f"Opslag_{row['company']}.txt", key=f"o_{index}")
