@@ -69,10 +69,12 @@ def fill_docx(template, content, headline, company, title, contact_person):
         }
 
         for p in doc.paragraphs:
+            # Erstat tags i tekst
             for key, value in data.items():
                 if key in p.text:
                     p.text = p.text.replace(key, str(value))
             
+            # Indsæt brødtekst (afsnit for afsnit)
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
                 paragraphs_content = content.split('\n')
@@ -83,6 +85,7 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
 
+        # Tjek tabeller for tags
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -150,11 +153,12 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver din pakke..."):
+        with st.spinner("Genererer indhold..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
+                # ATS ANALYSE
                 ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
@@ -162,23 +166,25 @@ elif st.session_state.step == 4:
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
                 1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Brug dobbelt linjeskift. Ingen hilsner eller navne.
-                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle ansøgerens unikke vinkel i ansøgningen, ikke bare jobtitlen. Kun stort begyndelsesbogstav.
+                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle ansøgerens unikke vinkel og værdi baseret på ansøgningens indhold. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
                 4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et stærkt svarforslag. 
-                   BRUG DENNE FORMATERING: 
-                   #### [Spørgsmål]
-                   *Svar-strategi:* [Dit svar]
+                   STRENG REGEL: Ingen JSON-koder, ingen krøllede parenteser {{ }}, ingen nøglenavne. Kun ren Markdown tekst.
+                   Format:
+                   #### 1. [Spørgsmål]
+                   **Svarforslag:** [Svar]
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er en karriererådgiver. Svar KUN i JSON format. Ingen koder eller hilsner i ansøgningen."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON. Vær nøje med at interview-delen er ren tekst uden teknisk flet-kode."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
 
+                # Arkiv
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
@@ -207,6 +213,7 @@ elif st.session_state.step == 4:
             st.subheader("✉️ LinkedIn Pitch")
             st.success(res.get('pitch', ''))
             st.subheader("🎤 Interview Prep")
+            # Vi bruger markdown her for at sikre at AI'ens formatering vises korrekt
             st.markdown(res.get('interview', ''))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
