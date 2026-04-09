@@ -149,7 +149,7 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Analyserer og skriver..."):
+        with st.spinner("Skriver en fyldig ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
@@ -159,17 +159,28 @@ elif st.session_state.step == 4:
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # HOVED
+                # DYBDE INSTRUKTION
+                length_map = {
+                    "Kort": "ca. 250-300 ord. Fokus på de vigtigste pointer.",
+                    "Standard": "ca. 450-550 ord. Gå i dybden med mindst 3 konkrete eksempler fra CV'et.",
+                    "Uddybende": "ca. 700+ ord. Meget detaljeret kobling mellem alle jobkrav og ansøgerens profil."
+                }
+                
                 main_prompt = f"""
                 Lav en JSON pakke:
-                'ansogning': Fyldig brødtekst med \\n\\n mellem afsnit. Ingen hilsen/afsked. Motivation: {p['mot_pos']}.
-                'pitch': Kort LinkedIn besked.
-                'interview': De 3 vigtigste spørgsmål og svar-strategi (som ÉN tekststreng).
-                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}
+                'ansogning': Skriv en FYLDIG brødtekst (Længde: {length_map[p['len']]}). 
+                Brug dobbelt linjeskift (\\n\\n) mellem afsnit (mindst 4-5 afsnit). 
+                Ingen hilsen/afsked. Start direkte. Motivation skal placeres {p['mot_pos']}.
+                Uddyb konkrete resultater og erfaringer fra CV'et og kobl dem direkte til opgaverne i jobbet.
+                
+                'pitch': Kort LinkedIn besked til en rekrutteringsansvarlig.
+                'interview': De 3 vigtigste spørgsmål og strategiske svarforslag (som én tekststreng).
+                
+                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, NOTER: {st.session_state.noter}
                 """
                 resp = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar KUN i JSON format. 'interview' skal være en simpel tekststreng."}, {"role": "user", "content": main_prompt}],
+                    model="gpt-4o", # Vi bruger den store model for bedre kvalitet og længde
+                    messages=[{"role": "system", "content": "Du er en ekspert i karriererådgivning. Svar KUN i JSON format. 'interview' skal være en simpel tekststreng."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -192,7 +203,6 @@ elif st.session_state.step == 4:
             st.subheader("✉️ LinkedIn Pitch")
             st.success(res.get('pitch', 'Ingen pitch genereret'))
             st.subheader("🎤 Interview Prep")
-            # Her tvinger vi indholdet til at blive vist som tekst, selv hvis AI sender en liste
             i_text = res.get('interview', 'Ingen interview prep genereret')
             if isinstance(i_text, list): i_text = "\n\n".join(i_text)
             st.warning(i_text)
