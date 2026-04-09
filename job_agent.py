@@ -10,10 +10,11 @@ from datetime import datetime
 from docx import Document
 from fpdf import FPDF
 from PyPDF2 import PdfReader
+import json
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - Ultra+", page_icon="🚀", layout="wide")
-db_path = "job_agent_arkiv_v2.db"
+st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀", layout="wide")
+db_path = "job_agent_arkiv_v_final.db"
 
 def init_db():
     conn = sqlite3.connect(db_path)
@@ -62,10 +63,17 @@ def fill_word_template(template_file, content, company_name, job_title):
     try:
         doc = Document(template_file)
         today_str = datetime.now().strftime("%d. %B %Y")
-        data_map = {"{{ANSOGNING}}": content, "{{VIRKSOMHED}}": company_name, "{{JOBTITEL}}": job_title, "{{DATO}}": today_str}
+        data_map = {
+            "{{ANSOGNING}}": content, 
+            "{{VIRKSOMHED}}": company_name, 
+            "{{JOBTITEL}}": job_title,
+            "{{DATO}}": today_str
+        }
         for p in doc.paragraphs:
             for key, value in data_map.items():
-                if key in p.text: p.text = p.text.replace(key, value)
+                if key in p.text:
+                    p.text = p.text.replace(key, value)
+        
         target_stream = io.BytesIO()
         doc.save(target_stream)
         target_stream.seek(0)
@@ -73,60 +81,83 @@ def fill_word_template(template_file, content, company_name, job_title):
     except: return None
 
 # --- APP LAYOUT ---
-st.title("🚀 Job Agent Pro - Ultra+")
+st.title("🚀 Job Agent Pro - Master Edition")
 
-tabs = st.tabs(["📄 Ny Ansøgning", "📂 Arkiv", "💡 Karriere Rådgiver"])
+tabs = st.tabs(["📄 Ny Ansøgning", "📂 Arkiv"])
 
 with tabs[0]:
     with st.sidebar:
-        st.header("⚙️ Indstillinger")
+        st.header("⚙️ Grundindstillinger")
         api_key = st.secrets.get("OPENAI_API_KEY")
-        uploaded_cv = st.file_uploader("Upload CV (PDF)", type="pdf")
-        uploaded_template = st.file_uploader("Upload Word-skabelon (.docx)", type="docx")
+        uploaded_cv = st.file_uploader("1. Upload dit CV (PDF)", type="pdf")
+        uploaded_template = st.file_uploader("2. Upload Word-skabelon (.docx)", type="docx")
         
         st.divider()
-        st.subheader("🎯 Strategi")
-        selected_tone = st.select_slider("Tone:", options=["Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"], value="Balanceret")
+        st.subheader("🎨 Stil & Form")
+        selected_tone = st.select_slider("Toneleje:", options=["Formel", "Professionel", "Balanceret", "Personlig", "Kreativ"], value="Balanceret")
         selected_length = st.select_slider("Længde:", options=["Kort", "Standard", "Uddybende"], value="Standard")
+
+        st.divider()
+        st.subheader("🎯 Strategiske valg")
+        intro_strategy = st.selectbox("Indlednings-strategi:", [
+            "Direkte & Resultatorienteret",
+            "Værdi-baseret (Hvorfor jeg passer til jer)",
+            "Problemknuser (Hvad jeg kan løse for jer)",
+            "Nysgerrig & Motiveret"
+        ])
         
+        motivation_pos = st.radio("Placering af motivation:", ["I indledningen (Krogen)", "I bunden (Opsamlingen)"], index=0)
+        
+        focus_area = st.segmented_control("Hovedfokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], default="Balanceret")
+        
+        st.divider()
+        st.subheader("➕ Ekstra funktioner")
         mirror_language = st.toggle("Spejl virksomhedens sprogbrug", value=True)
         include_pitch = st.toggle("Generer LinkedIn Pitch", value=True)
-        include_interview = st.toggle("Generer Interview Spørgsmål", value=True)
+        include_interview = st.toggle("Generer Interview Prep", value=True)
 
     st.subheader("Job Detaljer")
     c1, c2 = st.columns(2)
-    with c1: company = st.text_input("Virksomhed:")
+    with c1: company = st.text_input("Virksomhedens navn:")
     with c2: title = st.text_input("Jobtitel:")
     
-    job_url = st.text_input("Link til jobopslag:")
-    job_desc_manual = st.text_area("Eller indsæt tekst:", height=100)
+    job_url = st.text_input("Link til jobopslag (URL):")
+    job_desc_manual = st.text_area("Eller indsæt jobtekst her:", height=100)
     
-    personal_notes = st.text_area("Personlige noter (f.eks. 'Jeg talte med HR')", height=70)
+    st.divider()
+    st.subheader("💡 Personlige noter & Guldkorn")
+    personal_notes = st.text_area("Specifikke ting AI'en skal nævne (valgfrit):", placeholder="F.eks. 'Jeg kender systemet de nævner'...", height=70)
 
     if st.button("Kør Fuldt Program ✨"):
-        if not api_key or not uploaded_cv or (not job_url and not job_desc_manual):
-            st.error("Udfyld venligst alle nødvendige felter.")
+        if not api_key:
+            st.error("OpenAI API-nøgle mangler.")
+        elif not uploaded_cv or not company or (not job_url and not job_desc_manual):
+            st.error("Udfyld venligst alle felter og upload CV.")
         else:
             try:
                 client = OpenAI(api_key=api_key)
                 cv_text = extract_text_from_pdf(uploaded_cv)
+                
                 job_text = job_desc_manual
                 if job_url:
-                    with st.spinner("Henter opslag..."):
+                    with st.spinner("Henter jobopslag..."):
                         fetched = get_text_from_url(job_url)
                         if len(fetched) > 150: job_text = fetched
 
                 # --- GENERERING ---
-                with st.spinner("Arbejder på din pakke..."):
-                    # Samlet prompt for at spare tid og sikre rød tråd
+                with st.spinner("Arbejder på din strategiske pakke..."):
                     main_prompt = f"""
                     Du er en elite karriererådgiver. Lav følgende for {title} hos {company}:
                     
                     1. En ansøgning (Brødtekst):
                        - Tone: {selected_tone}
                        - Længde: {selected_length}
+                       - Indlednings-strategi: {intro_strategy}
+                       - Motivationens placering: {motivation_pos}
+                       - Hovedfokus: {focus_area}
                        - Strategi: {'Spejl deres sprogbrug' if mirror_language else 'Standard professionel'}
-                       - Inkorporér noter: {personal_notes}
+                       - Personlige noter: {personal_notes}
+                       - Start og slut direkte (ingen afsender/modtager data).
                     
                     2. En LinkedIn Pitch (3-4 sætninger):
                        - En fængende besked til en rekrutteringsansvarlig.
@@ -135,21 +166,20 @@ with tabs[0]:
                        - De 3 mest sandsynlige spørgsmål baseret på gaps mellem CV og jobopslag.
                     
                     CV: {cv_text[:3000]}
-                    Job: {job_text[:3000]}
+                    Jobopslag: {job_text[:3000]}
                     """
                     
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": "Svar i JSON format med nøglerne: 'ansogning', 'pitch', 'interview'."},
+                        messages=[{"role": "system", "content": "Du skal svare i JSON format med nøglerne: 'ansogning', 'pitch', 'interview'."},
                                   {"role": "user", "content": main_prompt}],
                         response_format={ "type": "json_object" }
                     )
                     
-                    import json
                     res_data = json.loads(response.choices[0].message.content)
                     ans_text = res_data['ansogning']
                     
-                    # Gem i arkiv
+                    # Gem i database
                     conn = sqlite3.connect(db_path)
                     c = conn.cursor()
                     c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?, ?, ?, ?, ?, ?)",
@@ -157,8 +187,8 @@ with tabs[0]:
                     conn.commit()
                     conn.close()
 
-                    # VISUALISERING
-                    st.success("Færdig! Her er din pakke:")
+                    # --- VISUALISERING ---
+                    st.success("Færdig! Her er dit materiale:")
                     
                     col_left, col_right = st.columns([2, 1])
                     
@@ -170,9 +200,10 @@ with tabs[0]:
                         with d1:
                             if uploaded_template:
                                 w_file = fill_word_template(uploaded_template, ans_text, company, title)
-                                st.download_button("Hent Word 📄", w_file, f"Ansogning_{company}.docx")
+                                if w_file:
+                                    st.download_button("Hent Word-fil 📄", w_file, f"Ansogning_{company}.docx")
                         with d2:
-                            st.download_button("Hent PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
+                            st.download_button("Hent som PDF 📄", create_pdf(ans_text), f"Ansogning_{company}.pdf")
 
                     with col_right:
                         if include_pitch:
@@ -182,10 +213,17 @@ with tabs[0]:
                         if include_interview:
                             st.subheader("🎤 Interview Prep")
                             st.warning(res_data['interview'])
-
+            
             except Exception as e:
-                st.error(f"Fejl: {e}")
+                st.error(f"Der opstod en fejl: {e}")
 
 with tabs[1]:
-    st.header("Arkiv")
-    # (Samme arkiv logik som før)
+    st.header("📂 Arkiv")
+    if os.path.exists(db_path):
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
+        conn.close()
+        for i, row in df.iterrows():
+            with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+                st.write(row['ansogning'])
+                st.download_button("Download Tekst", row['ansogning'], f"Arkiv_{row['id']}.txt", key=f"dl_{row['id']}")
