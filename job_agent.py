@@ -16,9 +16,6 @@ st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀"
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
-    # Finder dansk tid (UTC+1 eller UTC+2 ved sommertid)
-    # Da Streamlit Cloud ofte kører på UTC, lægger vi 1-2 timer til manuelt eller bruger datetime
-    # En enkel og robust metode til dansk tid:
     return (datetime.utcnow() + timedelta(hours=2)).strftime("%d. %m. %Y, %H:%M")
 
 def init_db():
@@ -76,17 +73,16 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         for run in p.runs:
                             if key in run.text:
                                 run.text = run.text.replace(key, str(value))
-                        if key in p.text:
-                            p.text = p.text.replace(key, str(value))
         replace_placeholders(doc.paragraphs)
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     replace_placeholders(cell.paragraphs)
+        
         for p in doc.paragraphs:
             if "{{ANSOGNING}}" in p.text:
-                paragraphs_content = content.split('\n')
                 p.text = p.text.replace("{{ANSOGNING}}", "")
+                paragraphs_content = content.split('\n')
                 cursor = p
                 for text in paragraphs_content:
                     if text.strip():
@@ -145,9 +141,7 @@ elif st.session_state.step == 3:
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
-    col1, col2 = st.columns(2)
-    if col1.button("← Tilbage"): prev_step(); st.rerun()
-    if col2.button("Generér Alt ✨"):
+    if st.button("Generér Alt ✨"):
         st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos, "headline_type": headline_type}
         next_step()
         st.rerun()
@@ -155,35 +149,32 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Udfører analyse og skriver din pakke..."):
+        with st.spinner("Skriver en stærk ansøgning og forbereder interview..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS ANALYSE
                 ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # HOVED GENERERING
                 main_prompt = f"""
-                Du er en elite-rekrutteringskonsulent. Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv KUN selve brødteksten. Ingen hilsner eller navne. ca. 500 ord.
-                2. 'overskrift': En '{p['headline_type']}' overskrift baseret på ansøgningens vinkel. Kun stort begyndelsesbogstav.
+                Lav en JSON pakke på dansk.
+                1. 'ansogning': Skriv en LANG og fyldig brødtekst (min. 5 afsnit). Start direkte. Ingen 'Kære' eller 'Hilsen'. Inddel i klare afsnit med dobbelt linjeskift.
+                2. 'overskrift': En '{p['headline_type']}' overskrift, der opsummerer ansøgerens unikke værdi. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': 3 spørgsmål og svar-tips i punktform (-).
-                STRATEGI: Tone: {p['tone']}, Fokus: {p['fokus']}, Motivation: {p['mot_pos']}.
+                4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et konkret svarforslag. Formatér det som ren tekst med overskrifter pr. spørgsmål. Ingen JSON-koder i teksten.
+                
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du leverer kun rå tekst uden hilsner i JSON format."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er en karriererådgiver. Svar KUN i JSON format. Ingen koder eller hilsner i værdierne."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
 
-                # Arkivering med Dansk Tid
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
@@ -193,7 +184,7 @@ elif st.session_state.step == 4:
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
-        with st.expander("📊 Se udvidet ATS & Match Analyse", expanded=True):
+        with st.expander("📊 ATS & Match Analyse", expanded=True):
             st.markdown(st.session_state.ats_result)
         
         c_m, c_s = st.columns([2, 1])
@@ -201,7 +192,7 @@ elif st.session_state.step == 4:
             headline_final = res.get('overskrift', '').strip().capitalize()
             st.markdown(f"### {headline_final}")
             st.divider()
-            st.subheader("📝 Ansøgning (Brødtekst)")
+            st.subheader("📝 Ansøgning")
             st.write(res.get('ansogning', ''))
             
             if st.session_state.temp:
@@ -216,23 +207,14 @@ elif st.session_state.step == 4:
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
-# --- ARKIV SEKTION ---
+# --- ARKIV ---
 st.divider()
 st.subheader("📂 Arkiv")
 if os.path.exists(db_path):
-    conn = sqlite3.connect(db_path)
-    df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
-    conn.close()
-    
-    if not df.empty:
-        for index, row in df.head(15).iterrows():
-            with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.download_button(label="Hent ansøgning (.txt)", data=row['ansogning'], file_name=f"Ansogning_{row['company']}.txt", key=f"dl_ans_{index}")
-                with col_b:
-                    st.download_button(label="Hent jobopslag (.txt)", data=row['opslag'], file_name=f"Opslag_{row['company']}.txt", key=f"dl_ops_{index}")
-                st.divider()
-                st.write(row['ansogning'])
-    else:
-        st.info("Arkivet er tomt.")
+    conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
+    for index, row in df.head(10).iterrows():
+        with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+            c1, c2 = st.columns(2)
+            with c1: st.download_button("Hent Ansøgning", row['ansogning'], f"Ans_{row['company']}.txt", key=f"a_{index}")
+            with c2: st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"o_{index}")
+            st.write(row['ansogning'])
