@@ -35,7 +35,7 @@ init_db()
 # --- HJÆLPEFUNKTIONER ---
 def get_text_from_url(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
         for script in soup(["script", "style"]): script.extract()
@@ -43,19 +43,40 @@ def get_text_from_url(url):
     except: return ""
 
 def search_jobindex(query, location):
+    """Hybrid søgning der prøver RSS først, derefter scraping."""
     try:
         encoded_q = urllib.parse.quote(query)
         encoded_l = urllib.parse.quote(location)
         rss_url = f"https://www.jobindex.dk/jobsoegning?q={encoded_q}&l={encoded_l}&format=rss"
         
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'}
-        response = requests.get(rss_url, headers=headers, timeout=10)
         
-        if response.status_code == 200:
-            feed = feedparser.parse(response.content)
+        # Forsøg 1: RSS
+        response = requests.get(rss_url, headers=headers, timeout=10)
+        feed = feedparser.parse(response.content)
+        
+        if feed.entries:
             return feed.entries
+        
+        # Forsøg 2: HTML Scraping (hvis RSS er tom/blokeret)
+        search_url = f"https://www.jobindex.dk/jobsoegning?q={encoded_q}&l={encoded_l}"
+        response = requests.get(search_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find jobannoncer i deres HTML struktur
+        jobs = []
+        for job in soup.find_all('div', class_='PaidJob'):
+            title_link = job.find('a', href=True)
+            if title_link:
+                class Entry: pass
+                e = Entry()
+                e.title = title_link.get_text(strip=True)
+                e.link = title_link['href']
+                jobs.append(e)
+        return jobs
+    except Exception as e:
+        st.error(f"Søgefejl: {e}")
         return []
-    except: return []
 
 def extract_pdf(file):
     try:
@@ -106,8 +127,8 @@ if 'step' not in st.session_state: st.session_state.step = 1
 def next_step(): st.session_state.step += 1
 def prev_step(): st.session_state.step -= 1
 def reset(): 
-    for key in list(st.session_state.keys()): 
-        if key != 'cv_text' and key != 'temp': # Bevar filer hvis muligt
+    for key in list(st.session_state.keys()):
+        if key not in ['cv_text', 'temp']: # Bevar filer
             del st.session_state[key]
     st.session_state.step = 1
 
@@ -118,13 +139,13 @@ st.progress(st.session_state.step / 4)
 if st.session_state.step == 1:
     st.header("1. Find Job & Grundlag")
     
-    with st.expander("🔍 Valgfrit: Søg efter jobopslag på Jobindex"):
+    with st.expander("🔍 Valgfrit: Søg efter jobopslag på Jobindex", expanded=False):
         c_s1, c_s2 = st.columns(2)
-        search_q = c_s1.text_input("Jobtitel:")
-        search_l = c_s2.text_input("By/Område:")
+        search_q = c_s1.text_input("Jobtitel (f.eks. Projektleder):")
+        search_l = c_s2.text_input("Område (f.eks. Aarhus):")
         
         if st.button("Søg nu"):
-            with st.spinner("Henter data..."):
+            with st.spinner("Henter data fra Jobindex..."):
                 results = search_jobindex(search_q, search_l)
                 if results:
                     for entry in results[:10]:
@@ -136,7 +157,7 @@ if st.session_state.step == 1:
                             st.session_state.titl = entry.title.split(" hos ")[0]
                             st.success(f"Valgt: {st.session_state.titl}")
                 else:
-                    st.warning("Ingen resultater. Prøv bredere søgeord.")
+                    st.warning("Ingen resultater fundet. Prøv bredere søgeord.")
 
     st.divider()
     
@@ -146,7 +167,7 @@ if st.session_state.step == 1:
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhed:", value=st.session_state.get('comp', ""))
     titl = c2.text_input("Stilling:", value=st.session_state.get('titl', ""))
-    contact = st.text_input("Kontaktperson (hvis kendt):")
+    contact = st.text_input("Kontaktperson (valgfrit):")
     
     if st.button("Næste →", disabled=not (cv and comp and titl)):
         st.session_state.cv_text = extract_pdf(cv)
@@ -161,13 +182,13 @@ elif st.session_state.step == 2:
     st.header("2. Jobopslaget")
     
     col_u1, col_u2 = st.columns([3, 1])
-    manual_url = col_u1.text_input("Har du et link? Indsæt her:")
+    manual_url = col_u1.text_input("Indsæt link til job (hvis du har et):")
     if col_u2.button("Hent fra link"):
         if manual_url:
             st.session_state.fetched_txt = get_text_from_url(manual_url)
     
-    opslag = st.text_area("Jobtekst (redigér eller indsæt her):", value=st.session_state.get('fetched_txt', ""), height=350)
-    noter = st.text_area("Noter til AI (f.eks. 'Fokusér på min erfaring med Python'):")
+    opslag = st.text_area("Jobopslagets tekst:", value=st.session_state.get('fetched_txt', ""), height=350)
+    noter = st.text_area("Særlige noter til AI (valgfrit):")
     
     c_back, c_next = st.columns(2)
     if c_back.button("← Tilbage"): prev_step(); st.rerun()
@@ -182,7 +203,7 @@ elif st.session_state.step == 3:
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
     headline_type = c2.selectbox("Overskriftstype:", ["Formel (Ansøgning om...)", "Værdiskabende (Resultatorienteret)", "Kreativ/Catchy", "Spørgende/Nysgerrig"])
-    length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
+    length = st.select_slider("Længde:", ["Kort", "Standard", "Uddybende"], "Standard")
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
@@ -195,22 +216,21 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver din pakke..."):
+        with st.spinner("Skriver din personlige pakke..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS ANALYSE
                 ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG og fyldig brødtekst (min. 5 afsnit). Brug dobbelt linjeskift. Ingen hilsner eller navne. Start direkte.
+                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Dobbelt linjeskift. Ingen hilsner/afsked. Start direkte.
                 2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle din vinkel i teksten. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': Top 3 mest kritiske spørgsmål baseret på jobbet med stærke svarforslag. 
+                4. 'interview': Top 3 mest kritiske spørgsmål og svarforslag. 
                    Formatér som ren Markdown: #### [Spørgsmål]\n**Svarforslag:** [Svar]
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}, NOTER: {st.session_state.noter}
@@ -228,7 +248,7 @@ elif st.session_state.step == 4:
                           (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
             except Exception as e:
-                st.error(f"Fejl under generering: {e}")
+                st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
@@ -260,13 +280,9 @@ st.divider()
 st.subheader("📂 Arkiv")
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
-    if not df.empty:
-        for index, row in df.head(15).iterrows():
-            with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-                ca, cb = st.columns(2)
-                with ca: st.download_button("Hent Ansøgning (.txt)", row['ansogning'], f"Ans_{row['company']}.txt", key=f"arch_a_{index}")
-                with cb: st.download_button("Hent Jobopslag (.txt)", row['opslag'], f"Ops_{row['company']}.txt", key=f"arch_o_{index}")
-                st.divider()
-                st.write(row['ansogning'])
-    else:
-        st.info("Arkivet er tomt.")
+    for index, row in df.head(15).iterrows():
+        with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+            ca, cb = st.columns(2)
+            with ca: st.download_button("Hent Ansøgning", row['ansogning'], f"Ans_{row['company']}.txt", key=f"arch_a_{index}")
+            with cb: st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"arch_o_{index}")
+            st.write(row['ansogning'])
