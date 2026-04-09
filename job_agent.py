@@ -13,8 +13,8 @@ import json
 import urllib.parse
 import re
 
-# --- KONFIGURATION ---
-st.set_page_config(page_title="Job Agent Pro - Full Edition", page_icon="🚀", layout="wide")
+# --- KONFIGURATION & DATABASE ---
+st.set_page_config(page_title="Job Agent Pro - Full Master", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def init_db():
@@ -70,12 +70,12 @@ def fill_docx(template, content, headline, company, title, contact):
         }
 
         for p in doc.paragraphs:
-            # Erstat tags i selve linjen
+            # Erstat tags i eksisterende linjer
             for key, val in replacements.items():
                 if key in p.text:
                     p.text = p.text.replace(key, val)
             
-            # Indsæt ansøgning ved placeholder - bevarer afsnit
+            # Indsæt ansøgning ved placeholder
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
                 for line in str(content).split('\n'):
@@ -113,7 +113,7 @@ if st.session_state.step == 1:
         st.session_state.step = 2
         st.rerun()
 
-# STEP 2: JOBOPSLAG (INKL. LINK FUNKTION)
+# STEP 2: JOBOPSLAG OG LINK-SCRAPER
 elif st.session_state.step == 2:
     st.header("2. Jobopslaget")
     col_l1, col_l2 = st.columns([3, 1])
@@ -122,8 +122,7 @@ elif st.session_state.step == 2:
         if job_url:
             st.session_state.fetched_txt = get_text_from_url(job_url)
     
-    opslag_final = st.text_area("Jobtekst (rediger hvis nødvendigt):", 
-                                value=st.session_state.get('fetched_txt', ""), height=300)
+    opslag_final = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=300)
     
     c_back, c_next = st.columns(2)
     if c_back.button("← Tilbage"): st.session_state.step = 1; st.rerun()
@@ -132,16 +131,18 @@ elif st.session_state.step == 2:
         st.session_state.step = 3
         st.rerun()
 
-# STEP 3: STRATEGI
+# STEP 3: STRATEGI, LÆNGDE OG OVERSKRIFT
 elif st.session_state.step == 3:
-    st.header("3. Strategi")
+    st.header("3. Strategi & Valg")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone", ["Professionel & Seriøs", "Personlig & Varm", "Kreativ & Modig"])
-    length = c2.select_slider("Længde", ["Kort", "Standard", "Uddybende"], value="Standard")
+    head_type = c2.selectbox("Overskriftstype", ["Værdiskabende", "Catchy", "Formel", "Spørgende"])
+    
+    length = st.select_slider("Længde på ansøgning", ["Kort", "Standard", "Uddybende"], value="Standard")
     mot = st.radio("Motivationens placering", ["I starten", "I slutningen"], horizontal=True)
     
     if st.button("Generér min ansøgning ✨"):
-        st.session_state.p = {"tone": tone, "length": length, "mot": mot}
+        st.session_state.p = {"tone": tone, "length": length, "mot": mot, "head_type": head_type}
         st.session_state.step = 4
         st.rerun()
 
@@ -149,14 +150,16 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver en fyldig ansøgning..."):
+        with st.spinner("Skriver en stærk ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                p = st.session_state.p
                 prompt = f"""
                 Skriv en DYBDEGÅENDE dansk ansøgning som JSON. 
-                VIGTIGT: Skriv mindst 500 ord hvis 'Standard' eller 'Uddybende'. Brug mindst 4-5 afsnit med dobbelt linjeskift.
-                REGLER: Ingen hilsner (Kære/Hilsen). Start direkte med substans.
-                Motivation skal stå i {st.session_state.p['mot']}. Tone: {st.session_state.p['tone']}.
+                VIGTIGT: Skriv mindst 5-6 fyldige afsnit hvis 'Standard' eller 'Uddybende'. 
+                Overskriftstype: {p['head_type']}.
+                Regler: Ingen hilsner (Kære/Hilsen). Ingen flettekoder. 
+                Motivation: {p['mot']}. Tone: {p['tone']}.
                 Format: {{ "overskrift": "...", "ansogning": "...", "pitch": "...", "interview": "..." }}
                 CV: {st.session_state.cv_text[:2000]} | Job: {st.session_state.opslag[:2000]}
                 """
@@ -170,7 +173,7 @@ elif st.session_state.step == 4:
                 res['ansogning'] = clean_ai_text(res['ansogning'])
                 st.session_state.final_res = res
                 
-                # Gem i arkiv
+                # Arkivér
                 conn = sqlite3.connect(db_path)
                 conn.execute("INSERT INTO archive (date, company, title, ansogning, opslag) VALUES (?,?,?,?,?)",
                              (get_danish_time(), st.session_state.comp, st.session_state.titl, res['ansogning'], st.session_state.opslag))
@@ -207,5 +210,3 @@ if os.path.exists(db_path):
     for i, row in df.iterrows():
         with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
             st.write(row['ansogning'])
-            st.download_button("Hent ansøgning", row['ansogning'], f"Arkiv_A_{i}.txt", key=f"a_{i}")
-            st.download_button("Hent jobopslag", row['opslag'], f"Arkiv_J_{i}.txt", key=f"j_{i}")
