@@ -55,11 +55,15 @@ def fill_docx(template, content, headline, company, title, contact_person):
     try:
         template.seek(0)
         doc = Document(template)
+        
+        # Sikr dansk formatering af overskrift (Kun stort begyndelsesbogstav)
+        formatted_headline = headline.strip().capitalize()
+        
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
             "{{KONTAKTPERSON}}": contact_person,
-            "{{OVERSKRIFT}}": headline,
+            "{{OVERSKRIFT}}": formatted_headline,
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
         
@@ -153,28 +157,28 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver..."):
+        with st.spinner("Skriver din pakke..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
-                # ATS
+                # ATS Analyse
                 ats_p = f"Giv Match Score i % og 3 nøgleord.\nJob: {st.session_state.opslag[:1500]}\nCV: {st.session_state.cv_text[:1500]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
                 main_prompt = f"""
                 Lav en JSON pakke:
-                'overskrift': Lav en fængende overskrift af typen '{p['headline_type']}'.
-                'ansogning': Skriv en FYLDIG brødtekst (ca. 500 ord ved Standard). Brug \\n\\n til afsnit. Ingen hilsen/afsked. Motivation placeres {p['mot_pos']}.
+                'overskrift': Lav en overskrift af typen '{p['headline_type']}'. VIGTIGT: Brug kun stort begyndelsesbogstav (ikke versaler på hvert ord).
+                'ansogning': Skriv en FYLDIG brødtekst. Brug \\n\\n til afsnit. Ingen hilsen/afsked. Motivation placeres {p['mot_pos']}.
                 'pitch': Kort LinkedIn besked.
-                'interview': De 3 vigtigste spørgsmål og svar-strategi.
+                'interview': Lav en punktformet liste med de 3 vigtigste spørgsmål og strategiske svar-tips. Brug bindestreger (-) til punkterne.
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, NOTER: {st.session_state.noter}
                 """
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Svar KUN i JSON format. Skriv på fejlfrit dansk uden unødvendige versaler."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -192,15 +196,18 @@ elif st.session_state.step == 4:
         res = st.session_state.final_res
         st.info(f"📊 **Analyse:** {st.session_state.ats_result}")
         
+        # Formatering af overskrift til visning (Dansk stil)
+        headline_final = res.get('overskrift', '').strip().capitalize()
+
         c_m, c_s = st.columns([2, 1])
         with c_m:
-            st.markdown(f"### 🚩 {res.get('overskrift')}")
+            st.markdown(f"### 🚩 {headline_final}")
             st.divider()
             st.subheader("📝 Ansøgning")
             st.write(res.get('ansogning', ''))
             
             if st.session_state.temp:
-                doc = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_s:
