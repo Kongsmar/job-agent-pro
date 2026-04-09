@@ -4,8 +4,6 @@ import io
 import os
 import sqlite3
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
 from datetime import datetime
 from docx import Document
 from PyPDF2 import PdfReader
@@ -77,7 +75,7 @@ if st.session_state.step == 1:
 # --- TRIN 2: OPSLAG & NOTER ---
 elif st.session_state.step == 2:
     st.header("2. Jobbet")
-    opslag = st.text_area("Indsæt jobopslaget her:", height=200)
+    opslag = st.text_area("Indsæt jobopslaget her:", height=250)
     noter = st.text_area("Personlige noter (Valgfrit):", placeholder="Noget AI'en skal fremhæve?", height=100)
     
     col1, col2 = st.columns(2)
@@ -136,7 +134,7 @@ elif st.session_state.step == 4:
                       (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.comp, st.session_state.titl, res['ansogning'], st.session_state.opslag, p['tone']))
             conn.commit(); conn.close()
 
-            # Visning
+            st.success("Ansøgning genereret og gemt!")
             st.subheader("📝 Ansøgning")
             st.write(res['ansogning'])
             
@@ -153,14 +151,24 @@ elif st.session_state.step == 4:
     
     if st.button("Start forfra 🔄"): reset(); st.rerun()
 
-# --- ARKIV SEKTION (Altid tilgængelig i bunden) ---
+# --- ARKIV SEKTION (Nu med fuldt jobopslag) ---
 st.divider()
-with st.expander("📂 Se tidligere ansøgninger (Arkiv)"):
-    if os.path.exists(db_path):
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
-        conn.close()
+st.header("📂 Arkiv")
+if os.path.exists(db_path):
+    conn = sqlite3.connect(db_path)
+    df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
+    conn.close()
+    
+    if df.empty:
+        st.info("Arkivet er tomt.")
+    else:
         for _, r in df.iterrows():
-            st.write(f"**{r['date']} - {r['company']} ({r['title']})**")
-            st.caption(r['ansogning'][:200] + "...")
-            st.divider()
+            with st.expander(f"📌 {r['company']} - {r['title']} ({r['date']})"):
+                col_ans, col_ops = st.columns(2)
+                with col_ans:
+                    st.subheader("Din Ansøgning")
+                    st.write(r['ansogning'])
+                    st.download_button("Hent som tekst", r['ansogning'], f"Ansøgning_{r['company']}_{r['id']}.txt", key=f"ans_{r['id']}")
+                with col_ops:
+                    st.subheader("Oprindeligt Jobopslag")
+                    st.write(r['opslag'])
