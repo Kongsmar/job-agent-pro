@@ -60,7 +60,6 @@ def fill_docx(template, content, headline, company, title, contact_person):
         doc = Document(template)
         formatted_headline = headline.strip().capitalize()
         
-        # Tags der skal erstattes
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
@@ -69,14 +68,11 @@ def fill_docx(template, content, headline, company, title, contact_person):
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
 
-        # Robust erstatning i afsnit
         for p in doc.paragraphs:
-            # Standard tags
             for key, value in data.items():
                 if key in p.text:
                     p.text = p.text.replace(key, str(value))
             
-            # Special håndtering af Brødtekst
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
                 paragraphs_content = content.split('\n')
@@ -87,7 +83,6 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
 
-        # Erstatning i tabeller
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -95,14 +90,11 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         for key, value in data.items():
                             if key in p.text:
                                 p.text = p.text.replace(key, str(value))
-
         buf = io.BytesIO()
         doc.save(buf)
         buf.seek(0)
         return buf
-    except Exception as e:
-        st.error(f"Fejl i Word-fletning: {e}")
-        return None
+    except: return None
 
 # --- APP FLOW ---
 st.title("💼 Job Agent Pro")
@@ -158,7 +150,7 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver en fyldig ansøgning..."):
+        with st.spinner("Skriver din pakke..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
@@ -169,17 +161,20 @@ elif st.session_state.step == 4:
 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Start direkte. Ingen hilsner eller navne. Brug dobbelt linjeskift.
-                2. 'overskrift': En '{p['headline_type']}' overskrift baseret på ansøgningens vinkel. Kun stort begyndelsesbogstav.
+                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Brug dobbelt linjeskift. Ingen hilsner eller navne.
+                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle ansøgerens unikke vinkel i ansøgningen, ikke bare jobtitlen. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': Find de 3 mest kritiske spørgsmål og giv et stærkt svarforslag til hvert.
+                4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et stærkt svarforslag. 
+                   BRUG DENNE FORMATERING: 
+                   #### [Spørgsmål]
+                   *Svar-strategi:* [Dit svar]
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er en karriererådgiver. Svar KUN i JSON format. Ingen koder eller hilsner i ansøgningen."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -206,14 +201,13 @@ elif st.session_state.step == 4:
             
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                if doc:
-                    st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+                st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_s:
             st.subheader("✉️ LinkedIn Pitch")
             st.success(res.get('pitch', ''))
             st.subheader("🎤 Interview Prep")
-            st.warning(res.get('interview', ''))
+            st.markdown(res.get('interview', ''))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
