@@ -51,7 +51,7 @@ def extract_pdf(file):
         return "".join([p.extract_text() for p in reader.pages])
     except: return ""
 
-def fill_docx(template, content, company, title, contact_person):
+def fill_docx(template, content, headline, company, title, contact_person):
     try:
         template.seek(0)
         doc = Document(template)
@@ -59,6 +59,7 @@ def fill_docx(template, content, company, title, contact_person):
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
             "{{KONTAKTPERSON}}": contact_person,
+            "{{OVERSKRIFT}}": headline,
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
         
@@ -135,21 +136,24 @@ elif st.session_state.step == 3:
     st.header("3. Strategi")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
+    headline_type = c2.selectbox("Overskriftstype:", ["Formel (Ansøgning om...)", "Værdiskabende (Resultatorienteret)", "Kreativ/Catchy", "Spørgende/Nysgerrig"])
+    
     length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
     strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
     fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
+    
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): prev_step(); st.rerun()
     if col2.button("Generér Alt ✨"):
-        st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos}
+        st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos, "headline_type": headline_type}
         next_step()
         st.rerun()
 
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver en fyldig ansøgning..."):
+        with st.spinner("Skriver..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
@@ -159,31 +163,28 @@ elif st.session_state.step == 4:
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
-                # DYBDE INSTRUKTION
-                length_map = {
-                    "Kort": "ca. 250-300 ord. Fokus på de vigtigste pointer.",
-                    "Standard": "ca. 450-550 ord. Gå i dybden med mindst 3 konkrete eksempler fra CV'et.",
-                    "Uddybende": "ca. 700+ ord. Meget detaljeret kobling mellem alle jobkrav og ansøgerens profil."
-                }
-                
                 main_prompt = f"""
                 Lav en JSON pakke:
-                'ansogning': Skriv en FYLDIG brødtekst (Længde: {length_map[p['len']]}). 
-                Brug dobbelt linjeskift (\\n\\n) mellem afsnit (mindst 4-5 afsnit). 
-                Ingen hilsen/afsked. Start direkte. Motivation skal placeres {p['mot_pos']}.
-                Uddyb konkrete resultater og erfaringer fra CV'et og kobl dem direkte til opgaverne i jobbet.
-                
-                'pitch': Kort LinkedIn besked til en rekrutteringsansvarlig.
-                'interview': De 3 vigtigste spørgsmål og strategiske svarforslag (som én tekststreng).
+                'overskrift': Lav en fængende overskrift af typen '{p['headline_type']}'.
+                'ansogning': Skriv en FYLDIG brødtekst (ca. 500 ord ved Standard). Brug \\n\\n til afsnit. Ingen hilsen/afsked. Motivation placeres {p['mot_pos']}.
+                'pitch': Kort LinkedIn besked.
+                'interview': De 3 vigtigste spørgsmål og svar-strategi.
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, NOTER: {st.session_state.noter}
                 """
                 resp = client.chat.completions.create(
-                    model="gpt-4o", # Vi bruger den store model for bedre kvalitet og længde
-                    messages=[{"role": "system", "content": "Du er en ekspert i karriererådgivning. Svar KUN i JSON format. 'interview' skal være en simpel tekststreng."}, {"role": "user", "content": main_prompt}],
+                    model="gpt-4o",
+                    messages=[{"role": "system", "content": "Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
+
+                # GEM I ARKIV
+                conn = sqlite3.connect(db_path); c = conn.cursor()
+                c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
+                          (datetime.now().strftime("%Y-%m-%d %H:%M"), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
+                conn.commit(); conn.close()
+
             except Exception as e:
                 st.error(f"Fejl: {e}")
 
@@ -193,18 +194,28 @@ elif st.session_state.step == 4:
         
         c_m, c_s = st.columns([2, 1])
         with c_m:
+            st.markdown(f"### 🚩 {res.get('overskrift')}")
+            st.divider()
             st.subheader("📝 Ansøgning")
             st.write(res.get('ansogning', ''))
+            
             if st.session_state.temp:
-                doc = fill_docx(st.session_state.temp, res.get('ansogning'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
                 st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_s:
             st.subheader("✉️ LinkedIn Pitch")
-            st.success(res.get('pitch', 'Ingen pitch genereret'))
+            st.success(res.get('pitch', ''))
             st.subheader("🎤 Interview Prep")
-            i_text = res.get('interview', 'Ingen interview prep genereret')
-            if isinstance(i_text, list): i_text = "\n\n".join(i_text)
-            st.warning(i_text)
+            st.warning(res.get('interview', ''))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
+
+# --- ARKIV ---
+st.divider()
+st.subheader("📂 Arkiv")
+if os.path.exists(db_path):
+    conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
+    for _, row in df.head(10).iterrows():
+        with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+            st.write(row['ansogning'])
