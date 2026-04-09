@@ -147,7 +147,9 @@ elif st.session_state.step == 4:
                 p = st.session_state.p
                 
                 # ATS ANALYSE
-                ats_p = f"Analysér jobopslag mod CV. Find 3 vigtigste nøgleord og Match Score.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
+                ats_p = f"Analysér jobopslag mod CV. 
+                Giv mig et 'Match Score' i procent (f.eks. 85%) og en kort begrundelse.
+                Find 3 vigtigste nøgleord.\nJob: {st.session_state.opslag[:2000]}\nCV: {st.session_state.cv_text[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
