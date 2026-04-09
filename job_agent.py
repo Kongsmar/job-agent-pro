@@ -59,6 +59,8 @@ def fill_docx(template, content, headline, company, title, contact_person):
         template.seek(0)
         doc = Document(template)
         formatted_headline = headline.strip().capitalize()
+        
+        # Tags der skal erstattes
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
@@ -66,20 +68,15 @@ def fill_docx(template, content, headline, company, title, contact_person):
             "{{OVERSKRIFT}}": formatted_headline,
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
-        def replace_placeholders(paragraphs):
-            for p in paragraphs:
-                for key, value in data.items():
-                    if key in p.text:
-                        for run in p.runs:
-                            if key in run.text:
-                                run.text = run.text.replace(key, str(value))
-        replace_placeholders(doc.paragraphs)
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    replace_placeholders(cell.paragraphs)
-        
+
+        # Robust erstatning i afsnit
         for p in doc.paragraphs:
+            # Standard tags
+            for key, value in data.items():
+                if key in p.text:
+                    p.text = p.text.replace(key, str(value))
+            
+            # Special håndtering af Brødtekst
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
                 paragraphs_content = content.split('\n')
@@ -89,11 +86,23 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         new_p = doc.add_paragraph(text.strip())
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
+
+        # Erstatning i tabeller
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        for key, value in data.items():
+                            if key in p.text:
+                                p.text = p.text.replace(key, str(value))
+
         buf = io.BytesIO()
         doc.save(buf)
         buf.seek(0)
         return buf
-    except: return None
+    except Exception as e:
+        st.error(f"Fejl i Word-fletning: {e}")
+        return None
 
 # --- APP FLOW ---
 st.title("💼 Job Agent Pro")
@@ -149,7 +158,7 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Skriver en stærk ansøgning og forbereder interview..."):
+        with st.spinner("Skriver en fyldig ansøgning..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
@@ -160,17 +169,17 @@ elif st.session_state.step == 4:
 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG og fyldig brødtekst (min. 5 afsnit). Start direkte. Ingen 'Kære' eller 'Hilsen'. Inddel i klare afsnit med dobbelt linjeskift.
-                2. 'overskrift': En '{p['headline_type']}' overskrift, der opsummerer ansøgerens unikke værdi. Kun stort begyndelsesbogstav.
+                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Start direkte. Ingen hilsner eller navne. Brug dobbelt linjeskift.
+                2. 'overskrift': En '{p['headline_type']}' overskrift baseret på ansøgningens vinkel. Kun stort begyndelsesbogstav.
                 3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et konkret svarforslag. Formatér det som ren tekst med overskrifter pr. spørgsmål. Ingen JSON-koder i teksten.
+                4. 'interview': Find de 3 mest kritiske spørgsmål og giv et stærkt svarforslag til hvert.
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er en karriererådgiver. Svar KUN i JSON format. Ingen koder eller hilsner i værdierne."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON format."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -197,7 +206,8 @@ elif st.session_state.step == 4:
             
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+                if doc:
+                    st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_s:
             st.subheader("✉️ LinkedIn Pitch")
