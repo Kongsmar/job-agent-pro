@@ -63,7 +63,6 @@ def fill_docx(template, replacements):
                 if tag in p.text:
                     p.text = p.text.replace(tag, str(content))
         
-        # Tjek også tabeller for flettekoder
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -139,15 +138,15 @@ elif st.session_state.step == 4:
             client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
             p = st.session_state.p
             
-            # 1. ATS Match Analyse
+            # ATS Match Analyse
             ats_p = f"Giv en Match Score i % og en kort professionel analyse af styrker og mangler.\nJob: {st.session_state.opslag}\nCV: {st.session_state.cv_text}"
             ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
             st.session_state.ats_result = ats_resp.choices[0].message.content
 
-            # 2. Ansøgningsgenerering
+            # Ansøgningsgenerering
             kontakt = st.session_state.contact if st.session_state.contact else "Ansættelsesudvalget"
             main_prompt = f"""
-            Lav en JSON pakke på dansk. 
+            Lav en JSON pakke på dansk. Svar KUN med JSON.
             'ansogning': Skriv en komplet ansøgning adresseret til {kontakt}. Længde: {p['len']}. Tone: {p['tone']}. Strategi: {p['strat']}. Motivation skal være {p['mot_pos']}.
             'overskrift': Lav en overskrift af typen {p['h_type']}.
             'interview': 3 relevante spørgsmål og svar til samtalen. Brug #### til overskrifter og god luft mellem afsnit.
@@ -174,7 +173,6 @@ elif st.session_state.step == 4:
         st.info(st.session_state.ats_result)
         
         col_main, col_side = st.columns([2, 1])
-        
         with col_main:
             st.subheader("📄 Ansøgning")
             st.markdown(f"**{res.get('overskrift')}**")
@@ -197,12 +195,3 @@ elif st.session_state.step == 4:
             st.markdown(res.get('interview'))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
-
-# --- ARKIV ---
-st.divider()
-st.subheader("📂 Arkiv")
-if os.path.exists(db_path):
-    conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC LIMIT 5", conn); conn.close()
-    for i, row in df.iterrows():
-        with st.expander(f"📌 {row['company']} - {row['title']}"):
-            st.write(row['ansogning'])
