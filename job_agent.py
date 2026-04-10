@@ -12,7 +12,7 @@ from PyPDF2 import PdfReader
 import json
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - CV Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - CV & Ansøgning", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
@@ -59,6 +59,7 @@ def fill_docx(template, content, headline, company, title, contact_person, is_cv
         template.seek(0)
         doc = Document(template)
         
+        # Data til almindelige tags
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
@@ -67,16 +68,19 @@ def fill_docx(template, content, headline, company, title, contact_person, is_cv
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
 
-        tag_to_replace = "{{CV_OPTIMERET}}" if is_cv else "{{ANSOGNING}}"
+        # Find ud af hvilket tag vi skal kigge efter til brødteksten
+        main_tag = "{{CV_OPTIMERET}}" if is_cv else "{{ANSOGNING}}"
 
         for p in doc.paragraphs:
+            # Erstat stamdata tags
             for key, value in data.items():
                 if key in p.text:
                     p.text = p.text.replace(key, str(value))
             
-            if tag_to_replace in p.text:
-                p.text = p.text.replace(tag_to_replace, "")
-                paragraphs_content = content.split('\n')
+            # Indsæt genereret indhold (afsnit for afsnit)
+            if main_tag in p.text:
+                p.text = p.text.replace(main_tag, "")
+                paragraphs_content = str(content).split('\n')
                 cursor = p
                 for text in paragraphs_content:
                     if text.strip():
@@ -84,6 +88,7 @@ def fill_docx(template, content, headline, company, title, contact_person, is_cv
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
 
+        # Tjek tabeller for tags
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -91,6 +96,7 @@ def fill_docx(template, content, headline, company, title, contact_person, is_cv
                         for key, value in data.items():
                             if key in p.text:
                                 p.text = p.text.replace(key, str(value))
+                                
         buf = io.BytesIO()
         doc.save(buf)
         buf.seek(0)
@@ -103,9 +109,11 @@ st.progress(st.session_state.step / 4)
 
 if st.session_state.step == 1:
     st.header("1. Grundlaget")
-    cv = st.file_uploader("Upload dit CV (PDF)", type="pdf")
-    temp = st.file_uploader("Word-skabelon: Ansøgning", type="docx")
-    cv_temp = st.file_uploader("Word-skabelon: CV (Skal indeholde {{CV_OPTIMERET}})", type="docx")
+    cv = st.file_uploader("Upload dit nuværende CV (PDF)", type="pdf")
+    
+    col_t1, col_t2 = st.columns(2)
+    temp = col_t1.file_uploader("Word-skabelon: Ansøgning", type="docx")
+    cv_temp = col_t2.file_uploader("Word-skabelon: CV", type="docx")
     
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhedens navn:")
@@ -142,10 +150,10 @@ elif st.session_state.step == 3:
     st.header("3. Strategi")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
-    headline_type = c2.selectbox("Overskriftstype:", ["Formel", "Værdiskabende", "Catchy", "Spørgende"])
+    headline_type = c2.selectbox("Overskriftstype:", ["Formel", "Værdiskabende", "Kreativ/Catchy", "Spørgende"])
     length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
     
-    if st.button("Generér Alt (Ansøgning + Optimeret CV) ✨"):
+    if st.button("Generér Alt (Ansøgning + CV-optimering) ✨"):
         st.session_state.p = {"tone": tone, "len": length, "headline_type": headline_type}
         next_step()
         st.rerun()
@@ -153,24 +161,26 @@ elif st.session_state.step == 3:
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Genererer indhold og optimerer CV..."):
+        with st.spinner("AI arbejder på både ansøgning og CV..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                p = st.session_state.p
                 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG ansøgning (min. 5 afsnit). 
-                2. 'overskrift': Lav en overskrift af typen '{st.session_state.p['headline_type']}'.
-                3. 'cv_optimeret': Tag udgangspunkt i brugerens CV og omskriv 'Profiltekst' og de vigtigste 'Erfaringer', så de matcher jobopslagets specifikke krav. Brug listepunkter.
+                1. 'ansogning': Skriv en komplet ansøgning (min. 5 afsnit). Ingen hilsner.
+                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'.
+                3. 'cv_optimeret': Omskriv brugerens profiltekst og vigtigste erfaringer så de matcher jobopslaget. Brug bullets.
                 4. 'pitch': 3-4 sætninger til LinkedIn.
-                5. 'interview': 3 kritiske spørgsmål og svarforslag.
+                5. 'interview': 3 kritiske spørgsmål og svar.
                 
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Svar KUN i JSON."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er karriereekspert. Svar KUN i JSON."}, 
+                             {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -178,7 +188,7 @@ elif st.session_state.step == 4:
                 # Arkiv
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
-                          (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, st.session_state.p['tone']))
+                          (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
                 conn.commit(); conn.close()
             except Exception as e:
                 st.error(f"Fejl: {e}")
@@ -186,27 +196,33 @@ elif st.session_state.step == 4:
     if "final_res" in st.session_state:
         res = st.session_state.final_res
         
-        tab1, tab2, tab3 = st.tabs(["📄 Ansøgning", "👤 Optimeret CV", "🎤 Interview & LinkedIn"])
+        col_main, col_side = st.columns([2, 1])
         
-        with tab1:
-            st.subheader(res.get('overskrift'))
+        with col_main:
+            # --- ANSØGNING ---
+            st.subheader("📄 Din Ansøgning")
+            h_final = res.get('overskrift', '').strip().capitalize()
+            st.markdown(f"**Overskrift:** {h_final}")
             st.write(res.get('ansogning'))
             if st.session_state.temp:
-                doc = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                st.download_button("Download Ansøgning (.docx) 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
-        
-        with tab2:
-            st.subheader("Optimerede sektioner til dit CV")
-            st.info("Brug dette indhold til at opdatere dit CV, så det matcher jobopslaget perfekt.")
-            st.write(res.get('cv_optimeret'))
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), h_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                st.download_button("Download Ansøgning (.docx)", doc, f"Ansøgning_{st.session_state.comp}.docx")
+            
+            st.divider()
+            
+            # --- CV OPTIMERING ---
+            st.subheader("👤 Optimeret CV-indhold")
+            st.success("Her er dit målrettede indhold til CV'et:")
+            cv_content = res.get('cv_optimeret', '')
+            st.write(cv_content)
             if st.session_state.cv_temp:
-                cv_doc = fill_docx(st.session_state.cv_temp, res.get('cv_optimeret'), "", st.session_state.comp, st.session_state.titl, st.session_state.contact, is_cv=True)
-                st.download_button("Download Optimeret CV (.docx) 👤", cv_doc, f"CV_{st.session_state.comp}.docx")
+                cv_doc = fill_docx(st.session_state.cv_temp, cv_content, "", st.session_state.comp, st.session_state.titl, st.session_state.contact, is_cv=True)
+                st.download_button("Download Optimeret CV (.docx)", cv_doc, f"CV_{st.session_state.comp}.docx")
 
-        with tab3:
-            st.subheader("LinkedIn Pitch")
-            st.success(res.get('pitch'))
-            st.subheader("Interview Prep")
+        with col_side:
+            st.subheader("✉️ LinkedIn")
+            st.info(res.get('pitch'))
+            st.subheader("🎤 Interview Prep")
             st.markdown(res.get('interview'))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
