@@ -273,3 +273,16 @@ if os.path.exists(db_path):
             with c2: 
                 st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"o_{index}")
             st.write(row['ansogning'])
+            # --- ADMINISTRATION ---
+st.sidebar.divider()
+if st.sidebar.button("⚠️ Ryd hele arkivet"):
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("DELETE FROM archive")
+        conn.commit()
+        conn.close()
+        st.sidebar.success("Arkivet er tømt!")
+        st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Kunne ikke rydde arkiv: {e}")
