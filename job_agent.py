@@ -47,15 +47,36 @@ def reset():
 
 # --- HJÆLPEFUNKTIONER ---
 def get_text_from_url(url):
+    """Henter tekst fra URL og formaterer overskrifter og lister."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        # Tilføj timeout for at undgå at appen fryser
         response = requests.get(url, headers=headers, timeout=10)
+        response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
-        for script in soup(["script", "style"]): 
-            script.extract()
-        return soup.get_text(separator=' ', strip=True)
-    except: 
-        return ""
+        
+        # Fjern støj som menuer og fodnoter
+        for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            element.extract()
+
+        formatted_output = []
+        # Gennemgå vigtige tags for at bevare strukturen
+        for tag in soup.find_all(['h1', 'h2', 'h3', 'p', 'li']):
+            text = tag.get_text().strip()
+            if text:
+                if tag.name in ['h1', 'h2', 'h3']:
+                    # Lav tydelige overskrifter med luft
+                    formatted_output.append(f"\n\n### {text.upper()}\n")
+                elif tag.name == 'li':
+                    # Punkttegn til lister (vigtigt for jobkrav)
+                    formatted_output.append(f"* {text}")
+                else:
+                    # Almindelige afsnit
+                    formatted_output.append(f"{text}\n")
+        
+        return "\n".join(formatted_output)
+    except Exception as e:
+        return f"Kunne ikke hente teksten korrekt: {e}"
 
 def extract_pdf(file):
     try:
@@ -140,7 +161,7 @@ elif st.session_state.step == 2:
         if txt: 
             st.session_state.fetched_txt = txt
             
-    opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=250)
+    opslag = st.text_area("Jobtekst (Formateret):", value=st.session_state.get('fetched_txt', ""), height=450)
     noter = st.text_area("Noter:")
     
     col1, col2 = st.columns(2)
