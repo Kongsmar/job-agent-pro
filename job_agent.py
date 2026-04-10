@@ -12,7 +12,7 @@ from PyPDF2 import PdfReader
 import json
 
 # --- KONFIGURATION & DATABASE ---
-st.set_page_config(page_title="Job Agent Pro - Master Edition", page_icon="🚀", layout="wide")
+st.set_page_config(page_title="Job Agent Pro - CV Edition", page_icon="🚀", layout="wide")
 db_path = "job_agent_arkiv.db"
 
 def get_danish_time():
@@ -54,29 +54,28 @@ def extract_pdf(file):
         return "".join([p.extract_text() for p in reader.pages])
     except: return ""
 
-def fill_docx(template, content, headline, company, title, contact_person):
+def fill_docx(template, content, headline, company, title, contact_person, is_cv=False):
     try:
         template.seek(0)
         doc = Document(template)
-        formatted_headline = headline.strip().capitalize()
         
         data = {
             "{{VIRKSOMHED}}": company, 
             "{{JOBTITEL}}": title, 
             "{{KONTAKTPERSON}}": contact_person,
-            "{{OVERSKRIFT}}": formatted_headline,
+            "{{OVERSKRIFT}}": headline.strip().capitalize() if headline else "",
             "{{DATO}}": datetime.now().strftime("%d. %m. %Y")
         }
 
+        tag_to_replace = "{{CV_OPTIMERET}}" if is_cv else "{{ANSOGNING}}"
+
         for p in doc.paragraphs:
-            # Erstat tags i tekst
             for key, value in data.items():
                 if key in p.text:
                     p.text = p.text.replace(key, str(value))
             
-            # Indsæt brødtekst (afsnit for afsnit)
-            if "{{ANSOGNING}}" in p.text:
-                p.text = p.text.replace("{{ANSOGNING}}", "")
+            if tag_to_replace in p.text:
+                p.text = p.text.replace(tag_to_replace, "")
                 paragraphs_content = content.split('\n')
                 cursor = p
                 for text in paragraphs_content:
@@ -85,7 +84,6 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
 
-        # Tjek tabeller for tags
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -106,14 +104,18 @@ st.progress(st.session_state.step / 4)
 if st.session_state.step == 1:
     st.header("1. Grundlaget")
     cv = st.file_uploader("Upload dit CV (PDF)", type="pdf")
-    temp = st.file_uploader("Upload din Word-skabelon (.docx)", type="docx")
+    temp = st.file_uploader("Word-skabelon: Ansøgning", type="docx")
+    cv_temp = st.file_uploader("Word-skabelon: CV (Skal indeholde {{CV_OPTIMERET}})", type="docx")
+    
     c1, c2 = st.columns(2)
     comp = c1.text_input("Virksomhedens navn:")
     titl = c2.text_input("Hvilken stilling søger du?")
     contact = st.text_input("Kontaktperson:")
+    
     if st.button("Næste →", disabled=not (cv and comp and titl)):
         st.session_state.cv_text = extract_pdf(cv)
         st.session_state.temp = temp
+        st.session_state.cv_temp = cv_temp
         st.session_state.comp = comp
         st.session_state.titl = titl
         st.session_state.contact = contact
@@ -140,46 +142,35 @@ elif st.session_state.step == 3:
     st.header("3. Strategi")
     c1, c2 = st.columns(2)
     tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
-    headline_type = c2.selectbox("Overskriftstype:", ["Formel (Ansøgning om...)", "Værdiskabende (Resultatorienteret)", "Kreativ/Catchy", "Spørgende/Nysgerrig"])
+    headline_type = c2.selectbox("Overskriftstype:", ["Formel", "Værdiskabende", "Catchy", "Spørgende"])
     length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
-    strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
-    fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
-    mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
-    if st.button("Generér Alt ✨"):
-        st.session_state.p = {"tone": tone, "len": length, "strat": strat, "fokus": fokus, "mot_pos": mot_pos, "headline_type": headline_type}
+    
+    if st.button("Generér Alt (Ansøgning + Optimeret CV) ✨"):
+        st.session_state.p = {"tone": tone, "len": length, "headline_type": headline_type}
         next_step()
         st.rerun()
 
 elif st.session_state.step == 4:
     st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("Genererer indhold..."):
+        with st.spinner("Genererer indhold og optimerer CV..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-                p = st.session_state.p
                 
-                # ATS ANALYSE
-                ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
-                ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
-                st.session_state.ats_result = ats_resp.choices[0].message.content
-
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Brug dobbelt linjeskift. Ingen hilsner eller navne.
-                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle ansøgerens unikke vinkel og værdi baseret på ansøgningens indhold. Kun stort begyndelsesbogstav.
-                3. 'pitch': 3-4 sætninger til LinkedIn.
-                4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et stærkt svarforslag. 
-                   STRENG REGEL: Ingen JSON-koder, ingen krøllede parenteser {{ }}, ingen nøglenavne. Kun ren Markdown tekst.
-                   Format:
-                   #### 1. [Spørgsmål]
-                   **Svarforslag:** [Svar]
+                1. 'ansogning': Skriv en LANG ansøgning (min. 5 afsnit). 
+                2. 'overskrift': Lav en overskrift af typen '{st.session_state.p['headline_type']}'.
+                3. 'cv_optimeret': Tag udgangspunkt i brugerens CV og omskriv 'Profiltekst' og de vigtigste 'Erfaringer', så de matcher jobopslagets specifikke krav. Brug listepunkter.
+                4. 'pitch': 3-4 sætninger til LinkedIn.
+                5. 'interview': 3 kritiske spørgsmål og svarforslag.
                 
-                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
+                DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}
                 """
                 
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON. Vær nøje med at interview-delen er ren tekst uden teknisk flet-kode."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Svar KUN i JSON."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -187,34 +178,36 @@ elif st.session_state.step == 4:
                 # Arkiv
                 conn = sqlite3.connect(db_path); c = conn.cursor()
                 c.execute("INSERT INTO archive (date, company, title, ansogning, opslag, tone) VALUES (?,?,?,?,?,?)",
-                          (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, p['tone']))
+                          (get_danish_time(), st.session_state.comp, st.session_state.titl, st.session_state.final_res['ansogning'], st.session_state.opslag, st.session_state.p['tone']))
                 conn.commit(); conn.close()
             except Exception as e:
                 st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
-        with st.expander("📊 ATS & Match Analyse", expanded=True):
-            st.markdown(st.session_state.ats_result)
         
-        c_m, c_s = st.columns([2, 1])
-        with c_m:
-            headline_final = res.get('overskrift', '').strip().capitalize()
-            st.markdown(f"### {headline_final}")
-            st.divider()
-            st.subheader("📝 Ansøgning")
-            st.write(res.get('ansogning', ''))
-            
+        tab1, tab2, tab3 = st.tabs(["📄 Ansøgning", "👤 Optimeret CV", "🎤 Interview & LinkedIn"])
+        
+        with tab1:
+            st.subheader(res.get('overskrift'))
+            st.write(res.get('ansogning'))
             if st.session_state.temp:
-                doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+                doc = fill_docx(st.session_state.temp, res.get('ansogning'), res.get('overskrift'), st.session_state.comp, st.session_state.titl, st.session_state.contact)
+                st.download_button("Download Ansøgning (.docx) 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
-        with c_s:
-            st.subheader("✉️ LinkedIn Pitch")
-            st.success(res.get('pitch', ''))
-            st.subheader("🎤 Interview Prep")
-            # Vi bruger markdown her for at sikre at AI'ens formatering vises korrekt
-            st.markdown(res.get('interview', ''))
+        with tab2:
+            st.subheader("Optimerede sektioner til dit CV")
+            st.info("Brug dette indhold til at opdatere dit CV, så det matcher jobopslaget perfekt.")
+            st.write(res.get('cv_optimeret'))
+            if st.session_state.cv_temp:
+                cv_doc = fill_docx(st.session_state.cv_temp, res.get('cv_optimeret'), "", st.session_state.comp, st.session_state.titl, st.session_state.contact, is_cv=True)
+                st.download_button("Download Optimeret CV (.docx) 👤", cv_doc, f"CV_{st.session_state.comp}.docx")
+
+        with tab3:
+            st.subheader("LinkedIn Pitch")
+            st.success(res.get('pitch'))
+            st.subheader("Interview Prep")
+            st.markdown(res.get('interview'))
         
         if st.button("Start forfra 🔄"): reset(); st.rerun()
 
@@ -225,7 +218,4 @@ if os.path.exists(db_path):
     conn = sqlite3.connect(db_path); df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn); conn.close()
     for index, row in df.head(10).iterrows():
         with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
-            c1, c2 = st.columns(2)
-            with c1: st.download_button("Hent Ansøgning", row['ansogning'], f"Ans_{row['company']}.txt", key=f"a_{index}")
-            with c2: st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"o_{index}")
             st.write(row['ansogning'])
