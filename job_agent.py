@@ -47,30 +47,15 @@ def reset():
 
 # --- HJÆLPEFUNKTIONER ---
 def get_text_from_url(url):
-    """Henter tekst fra URL og bevarer overskrifter og lister."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
-            element.extract()
-
-        output = []
-        for tag in soup.find_all(['h1', 'h2', 'h3', 'p', 'li']):
-            text = tag.get_text().strip()
-            if text:
-                if tag.name in ['h1', 'h2', 'h3']:
-                    output.append(f"\n\n### {text}\n")
-                elif tag.name == 'li':
-                    output.append(f"* {text}")
-                else:
-                    output.append(f"{text}\n")
-        
-        return "\n".join(output)
-    except Exception as e:
-        return f"Kunne ikke hente teksten: {e}"
+        for script in soup(["script", "style"]): 
+            script.extract()
+        return soup.get_text(separator=' ', strip=True)
+    except: 
+        return ""
 
 def extract_pdf(file):
     try:
@@ -93,10 +78,12 @@ def fill_docx(template, content, headline, company, title, contact_person):
         }
 
         for p in doc.paragraphs:
+            # Erstat tags i tekst
             for key, value in data.items():
                 if key in p.text:
                     p.text = p.text.replace(key, str(value))
             
+            # Indsæt brødtekst (afsnit for afsnit)
             if "{{ANSOGNING}}" in p.text:
                 p.text = p.text.replace("{{ANSOGNING}}", "")
                 paragraphs_content = content.split('\n')
@@ -107,6 +94,7 @@ def fill_docx(template, content, headline, company, title, contact_person):
                         cursor._element.addnext(new_p._element)
                         cursor = new_p
 
+        # Tjek tabeller for tags
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -147,13 +135,13 @@ if st.session_state.step == 1:
 elif st.session_state.step == 2:
     st.header("2. Jobbet")
     url = st.text_input("Link til jobopslag:")
-    if st.button("Hent tekst fra link") and url:
+    if st.button("Hent tekst") and url:
         txt = get_text_from_url(url)
         if txt: 
             st.session_state.fetched_txt = txt
             
-    opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=300)
-    noter = st.text_area("Særlige noter til AI'en:")
+    opslag = st.text_area("Jobtekst:", value=st.session_state.get('fetched_txt', ""), height=250)
+    noter = st.text_area("Noter:")
     
     col1, col2 = st.columns(2)
     if col1.button("← Tilbage"): 
@@ -166,13 +154,13 @@ elif st.session_state.step == 2:
         st.rerun()
 
 elif st.session_state.step == 3:
-    st.header("3. Strategi & Tone")
+    st.header("3. Strategi")
     c1, c2 = st.columns(2)
-    tone = c1.selectbox("Vælg tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
+    tone = c1.selectbox("Tone:", ["Professionel", "Balanceret", "Personlig", "Kreativ", "Formel"])
     headline_type = c2.selectbox("Overskriftstype:", ["Formel (Ansøgning om...)", "Værdiskabende (Resultatorienteret)", "Kreativ/Catchy", "Spørgende/Nysgerrig"])
-    length = st.select_slider("Ansøgningens omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
-    strat = st.selectbox("Strategisk indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
-    fokus = st.radio("Hovedfokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
+    length = st.select_slider("Omfang:", ["Kort", "Standard", "Uddybende"], "Standard")
+    strat = st.selectbox("Indledning:", ["Problemknuser", "Værdi-baseret", "Direkte/Resultater", "Passioneret"])
+    fokus = st.radio("Fokus:", ["Faglige resultater", "Personlige kompetencer", "Balanceret"], horizontal=True)
     mot_pos = st.radio("Motivationens placering:", ["I starten (krogen)", "I bunden (opsamlingen)"])
     
     if st.button("Generér Alt ✨"):
@@ -181,31 +169,33 @@ elif st.session_state.step == 3:
         st.rerun()
 
 elif st.session_state.step == 4:
-    st.header("4. Analyse & Resultat")
+    st.header("4. Resultat")
     if "final_res" not in st.session_state:
-        with st.spinner("AI analyserer match og skriver din ansøgning..."):
+        with st.spinner("Genererer indhold..."):
             try:
                 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
                 p = st.session_state.p
                 
                 # ATS ANALYSE
-                ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:3000]}\nJob: {st.session_state.opslag}"
+                ats_p = f"Analysér CV mod Jobopslag. Giv Match Score i % og top styrker/mangler.\nCV: {st.session_state.cv_text[:2000]}\nJob: {st.session_state.opslag[:2000]}"
                 ats_resp = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": ats_p}])
                 st.session_state.ats_result = ats_resp.choices[0].message.content
 
                 main_prompt = f"""
                 Lav en JSON pakke på dansk.
-                1. 'ansogning': Skriv en komplet ansøgning uden navne/hilsner. Længde: {p['len']}. Tone: {p['tone']}. Strategi: {p['strat']}. Motivation: {p['mot_pos']}.
-                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Kun stort begyndelsesbogstav.
-                3. 'pitch': 3-4 sætninger til LinkedIn/Netværk.
-                4. 'interview': 3 kritiske interviewspørgsmål og svar. Format: #### 1. Spørgsmål... Svarforslag...
-                
-                STRENG REGEL: Svar kun i JSON.
+                1. 'ansogning': Skriv en LANG brødtekst (min. 5 afsnit). Brug dobbelt linjeskift. Ingen hilsner eller navne.
+                2. 'overskrift': Lav en overskrift af typen '{p['headline_type']}'. Den skal afspejle ansøgerens unikke vinkel og værdi baseret på ansøgningens indhold. Kun stort begyndelsesbogstav.
+                3. 'pitch': 3-4 sætninger til LinkedIn.
+                4. 'interview': Find de 3 mest kritiske spørgsmål baseret på jobopslaget. For hvert spørgsmål, giv et stærkt svarforslag.
+                STRENG REGEL: Ingen JSON-koder, ingen krøllede parenteser {{ }}, ingen nøglenavne. Kun ren Markdown tekst.
+                Format:
+                #### 1. [Spørgsmål]
+                **Svarforslag:** [Svar]
                 DATA: CV: {st.session_state.cv_text}, JOB: {st.session_state.opslag}, ANALYSE: {st.session_state.ats_result}
                 """
                 resp = client.chat.completions.create(
                     model="gpt-4o",
-                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON."}, {"role": "user", "content": main_prompt}],
+                    messages=[{"role": "system", "content": "Du er karriererådgiver. Svar KUN i JSON. Vær nøje med at interview-delen er ren tekst uden teknisk flet-kode."}, {"role": "user", "content": main_prompt}],
                     response_format={"type": "json_object"}
                 )
                 st.session_state.final_res = json.loads(resp.choices[0].message.content)
@@ -218,7 +208,7 @@ elif st.session_state.step == 4:
                 conn.commit()
                 conn.close()
             except Exception as e:
-                st.error(f"Fejl i generering: {e}")
+                st.error(f"Fejl: {e}")
 
     if "final_res" in st.session_state:
         res = st.session_state.final_res
@@ -235,7 +225,7 @@ elif st.session_state.step == 4:
             
             if st.session_state.temp:
                 doc = fill_docx(st.session_state.temp, res.get('ansogning'), headline_final, st.session_state.comp, st.session_state.titl, st.session_state.contact)
-                st.download_button("Hent Word-fil 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
+                st.download_button("Hent Word 📄", doc, f"Ansøgning_{st.session_state.comp}.docx")
         
         with c_s:
             st.subheader("✉️ LinkedIn Pitch")
@@ -249,11 +239,16 @@ elif st.session_state.step == 4:
 
 # --- ARKIV ---
 st.divider()
-st.subheader("📂 Tidligere ansøgninger")
+st.subheader("📂 Arkiv")
 if os.path.exists(db_path):
     conn = sqlite3.connect(db_path)
     df = pd.read_sql_query("SELECT * FROM archive ORDER BY id DESC", conn)
     conn.close()
     for index, row in df.head(10).iterrows():
         with st.expander(f"📌 {row['company']} - {row['title']} ({row['date']})"):
+            c1, c2 = st.columns(2)
+            with c1: 
+                st.download_button("Hent Ansøgning", row['ansogning'], f"Ans_{row['company']}.txt", key=f"a_{index}")
+            with c2: 
+                st.download_button("Hent Opslag", row['opslag'], f"Ops_{row['company']}.txt", key=f"o_{index}")
             st.write(row['ansogning'])
